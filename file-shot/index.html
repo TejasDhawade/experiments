@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-  <title>File Shot — Upload Hoops</title>
+  <title>File Shot</title>
   <meta name="description" content="A tiny game: drag a file, aim at the hoop, and upload it with a swish.">
 
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -29,7 +29,7 @@
   <canvas id="scene" aria-label="Basketball upload game. Drag the file toward the hoop and release to shoot."></canvas>
 
   <!-- ========== HUD ========== -->
-  <header class="hud">
+  <header class="hud" id="hud">
     <div class="hud-left">
       <h1>Upload files</h1>
       <p>Drag, aim, and take the shot.</p>
@@ -42,6 +42,10 @@
         <div class="stat rate"><b id="rate">–</b><span>Success</span></div>
       </div>
       <div class="level">
+        <span class="revives" id="revives" title="Revives: each one saves you from a game over" hidden>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.6-7 10-7 10Z"/><path d="M12 9.5v5M9.5 12h5"/></svg>
+          <b id="revivesCount">0</b>
+        </span>
         <span id="levelName">Level 1 · Warm-up</span>
         <span class="lvbar" id="levelBar"><i id="levelFill"></i></span>
         <span class="pips" id="pips" title="Misses in a row. A 6th miss ends the game." hidden><i></i><i></i><i></i><i></i><i></i></span>
@@ -60,6 +64,9 @@
           <svg class="on" viewBox="0 0 24 24" aria-hidden="true"><path d="M11 5 6 9H3v6h3l5 4V5Z"/><path d="M15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13"/></svg>
           <svg class="off" viewBox="0 0 24 24" aria-hidden="true"><path d="M11 5 6 9H3v6h3l5 4V5Z"/><path d="m16 9 6 6m0-6-6 6"/></svg>
         </button>
+        <button class="btn icon" id="pauseBtn" type="button" aria-label="Pause" title="Pause (Esc)">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5v14M15 5v14"/></svg>
+        </button>
       </div>
     </div>
   </header>
@@ -74,21 +81,82 @@
     <span class="sub"></span>
   </div>
 
-  <!-- Final score -->
-  <div class="over" id="over" hidden>
-    <div class="over-card" role="dialog" aria-modal="true" aria-labelledby="overTitle">
-      <p class="over-kicker">Upload interrupted</p>
-      <h2 id="overTitle"><span id="finalUploaded">0</span><small>files uploaded</small></h2>
+  <!-- ========== Start screen ========== -->
+  <div class="screen menu" id="menu">
+    <div class="card menu-card" role="dialog" aria-modal="true" aria-labelledby="menuTitle">
+      <div id="menuMain">
+        <img class="logo" src="icons/icon-192.png" alt="" width="76" height="76">
+        <h2 id="menuTitle">File Shot</h2>
+        <p class="tagline">Drag, aim, upload. Basketball for your files.</p>
+
+        <div class="menu-buttons">
+          <button class="cta big" id="startClassic" type="button">
+            <span>Start game</span>
+            <small>Classic · 3 levels</small>
+          </button>
+          <button class="cta big alt" id="startTimed" type="button">
+            <span>Timed run</span>
+            <small>60 seconds · swishes add time</small>
+          </button>
+          <div class="menu-row">
+            <button class="cta ghost" id="howTo" type="button" aria-expanded="false" aria-controls="howPanel">How to play</button>
+            <button class="cta ghost" id="exitGame" type="button">Exit game</button>
+          </div>
+        </div>
+
+        <div class="how" id="howPanel" hidden>
+          <ul>
+            <li><b>Shoot:</b> drag a file toward the hoop. The further you pull, the harder you throw. Let go to shoot.</li>
+            <li><b>File weight:</b> <span class="tag light">LIGHT</span> files need a short pull, <span class="tag heavy">HEAVY</span> files need a long one.</li>
+            <li><b>Classic:</b> three levels. In level 3 each file has 8 seconds, and 6 misses in a row ends the game.</li>
+            <li><b>Revives:</b> every 10 uploads in a row earns one. It saves you from a game over.</li>
+            <li><b>Timed run:</b> 60 seconds on one clock. Clean swishes add 2 seconds.</li>
+          </ul>
+        </div>
+
+        <p class="menu-best">Best <b id="menuBest">0</b> <span>·</span> Timed best <b id="menuBestTimed">0</b></p>
+        <button class="link" id="menuMute" type="button">Sound: on</button>
+      </div>
+
+      <div id="goodbye" hidden>
+        <h2>Thanks for playing!</h2>
+        <p class="tagline">You can close this tab now.</p>
+        <button class="cta" id="goodbyeBack" type="button">Back to menu</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ========== Pause ========== -->
+  <div class="screen" id="pause" hidden>
+    <div class="card pause-card" role="dialog" aria-modal="true" aria-labelledby="pauseTitle">
+      <h2 id="pauseTitle">Paused</h2>
+      <div class="menu-buttons">
+        <button class="cta" id="resume" type="button">Resume</button>
+        <button class="cta ghost" id="pauseRestart" type="button">Restart</button>
+        <button class="cta ghost" id="pauseExit" type="button">Exit to menu</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ========== Results ========== -->
+  <div class="screen" id="over" hidden>
+    <div class="card over-card" role="dialog" aria-modal="true" aria-labelledby="overVerdict">
+      <p class="over-kicker" id="overKicker">Game over</p>
+      <h2 class="verdict" id="overVerdict">Upload failed.</h2>
+      <p class="big-score"><span id="finalUploaded">0</span><small id="finalUnit">files uploaded</small></p>
       <p class="best" id="finalBest">Best: 0</p>
       <dl class="final-stats">
         <div><dt>Missed</dt><dd id="finalMissed">0</dd></div>
         <div><dt>Success</dt><dd id="finalRate">–</dd></div>
         <div><dt>Best streak</dt><dd id="finalStreak">0</dd></div>
         <div><dt>Time</dt><dd id="finalTime">0s</dd></div>
+        <div><dt id="finalExtraLabel">Level</dt><dd id="finalExtra">1</dd></div>
+        <div><dt id="finalLastLabel">Revives used</dt><dd id="finalLast">0</dd></div>
       </dl>
       <div class="over-actions">
-        <button class="cta" id="restart" type="button">Play again</button>
-        <button class="cta ghost" id="share" type="button">Share score</button>
+        <button class="cta" id="restart" type="button">Restart</button>
+        <button class="cta ghost" id="share" type="button">Share</button>
+        <button class="cta ghost" id="overExit" type="button">Exit</button>
       </div>
       <div class="share-row">
         <a id="shareX" href="#" target="_blank" rel="noopener">Post on X</a>

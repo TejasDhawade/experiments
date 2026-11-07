@@ -12,13 +12,18 @@ A browser game that turns a file upload screen into basketball. Drag a file card
 
 - Drag a file card. The further you pull, the harder you throw. A dotted line shows where it'll go.
 - Let go to shoot. Through the rim is uploaded, anything else is missed.
+- File weight matters: **light** files (under 1 MB) need a short pull, **heavy** files (10 MB and up) need a long one.
 - You can also drop your own files onto the page and shoot those. Nothing actually gets uploaded.
 
-**Levels**
+**Modes**
 
-1. **Warm-up:** one file at a time.
-2. **Rush hour:** several files on the floor at once.
-3. **Deadline:** every file has 8 seconds before it expires. Miss 6 in a row and the game is over.
+- **Classic**, in three levels:
+  1. **Warm-up:** one file at a time.
+  2. **Rush hour:** several files on the floor at once.
+  3. **Deadline:** every file has 8 seconds before it expires. Miss 6 in a row and the game is over.
+
+  Every 10 uploads in a row earns a **revive**, which saves you from one game over.
+- **Timed run:** 60 seconds on one clock. Upload as many as you can; clean swishes add 2 seconds.
 
 **Built with** plain HTML, CSS and JavaScript on a single canvas. No libraries. Works on desktop and phone, can be installed like an app, and plays offline once loaded.
 

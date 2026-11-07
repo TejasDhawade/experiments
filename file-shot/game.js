@@ -7,7 +7,17 @@
    - Let go and the file flies in that direction.
    - Through the rim = uploaded. Anything else = missed.
 
-   Difficulty curve:
+   Modes (picked from the start screen):
+   - Classic: three levels, ends after too many misses in a row.
+   - Timed run: one 60 s clock, upload as many as you can. Swishes add time.
+
+   File weight: a file's size decides how hard it is to throw. Light files
+   (< 1 MB) need a short pull, heavy files (10 MB+) need a long one.
+
+   Revives (classic): every 10 uploads in a row earns one. A revive is used
+   up automatically instead of ending the game.
+
+   Difficulty curve (classic):
    - Level 1 "Warm-up": one file at a time.
    - Level 2 "Rush hour": several files at once (after 3 uploads or 35 s).
    - Level 3 "Deadline": after 8 uploads in level 2. Every file has
@@ -30,6 +40,28 @@
   const DEADLINE = 8;          // seconds per file in level 3
   const MAX_MISS_RUN = 5;      // the 6th miss in a row ends the game
   const BANNER_TIME = 2.6;
+  const REVIVE_EVERY = 10;     // uploads in a row per revive
+  const TIMED_SECONDS = 60;
+  const SWISH_BONUS = 2;       // seconds added for a clean swish in a timed run
+
+  // File weight. `pull` scales how far you must drag for full power.
+  const LIGHT_MAX = 1024 * 1024;
+  const HEAVY_MIN = 10 * 1024 * 1024;
+  const WEIGHTS = {
+    light:  { pull: 0.7,  scale: 0.9,  edge: 1.6, label: "LIGHT", chip: "#0284c7", hint: "Light file: a small pull is enough" },
+    medium: { pull: 1,    scale: 1,    edge: 2.5, label: "",      chip: "",        hint: "" },
+    heavy:  { pull: 1.38, scale: 1.12, edge: 5,   label: "HEAVY", chip: "#3f4a5c", hint: "Heavy file: pull further" },
+  };
+  const weightOf = (bytes) => (bytes < LIGHT_MAX ? "light" : bytes >= HEAVY_MIN ? "heavy" : "medium");
+  const W_ = (f) => WEIGHTS[f.weight] || WEIGHTS.medium;
+
+  // Two-or-three word verdicts for the end screen, by how the run went
+  const VERDICTS = {
+    zero: ["Upload failed.", "Error 404: aim", "Connection lost.", "Airball city."],
+    low: ["Still buffering…", "Slow connection.", "Partial upload.", "Dial-up energy."],
+    mid: ["Decent bandwidth.", "Sync complete.", "Solid transfer.", "Cloud approved."],
+    high: ["Fiber optic hands.", "Server room legend.", "Zero packet loss.", "Gigabit baller."],
+  };
 
   // ---------- DOM ----------
   const $ = (id) => document.getElementById(id);
@@ -48,6 +80,11 @@
   const picker = $("picker");
   const bannerEl = $("banner");
   const overEl = $("over");
+  const menuEl = $("menu");
+  const pauseEl = $("pause");
+  const hudEl = $("hud");
+  const revivesEl = $("revives");
+  const revivesCountEl = $("revivesCount");
 
   const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
   const darkQuery = matchMedia("(prefers-color-scheme: dark)");
@@ -155,14 +192,18 @@
 
   function makeFakeFile() {
     const [name, ext] = pick(FAKE_FILES);
-    return { name, ext, color: TYPE_COLORS[ext], size: formatSize((rand(0.05, 24) * 1024 * 1024) | 0) };
+    // an even mix of light, medium and heavy files
+    const r = Math.random();
+    const mb = r < 0.33 ? rand(0.02, 0.9) : r < 0.67 ? rand(1.2, 9.5) : rand(10.5, 48);
+    const bytes = Math.round(mb * 1024 * 1024);
+    return { name, ext, color: TYPE_COLORS[ext], bytes, weight: weightOf(bytes), size: formatSize(bytes) };
   }
 
   function makeRealFile(file) {
     const dot = file.name.lastIndexOf(".");
     const ext = (dot > 0 ? file.name.slice(dot + 1) : "FILE").toUpperCase().slice(0, 4);
     const name = dot > 0 ? file.name.slice(0, dot) : file.name;
-    return { name, ext, color: TYPE_COLORS[ext] || "#64748b", size: formatSize(file.size), real: true };
+    return { name, ext, color: TYPE_COLORS[ext] || "#64748b", bytes: file.size, weight: weightOf(file.size), size: formatSize(file.size), real: true };
   }
 
   // ---------- Sound (tiny Web Audio synth, no files needed) ----------
@@ -237,17 +278,22 @@
       tick() { tone(1800, 1700, 0.04, "square", 0.025); },
       expire() { tone(420, 180, 0.28, "sawtooth", 0.06); noise(0.2, "lowpass", 1200, 200, 0.8, 0.08); },
       levelUp() { [523.25, 659.25, 783.99, 1046.5].forEach((f, i) => tone(f, f, 0.25, "triangle", 0.09, i * 0.09)); },
+      revive() { [392, 523.25, 783.99].forEach((f, i) => tone(f, f * 1.01, 0.3, "sine", 0.1, i * 0.07)); noise(0.4, "bandpass", 800, 4000, 0.7, 0.08); },
+      earn() { tone(880, 880, 0.15, "sine", 0.08); tone(1320, 1320, 0.25, "sine", 0.08, 0.1); },
+      bonus() { tone(1567.98, 1567.98, 0.18, "triangle", 0.07); },
       gameOver() { [392, 329.63, 261.63].forEach((f, i) => tone(f, f * 0.98, 0.4, "triangle", 0.1, i * 0.16)); },
     };
   })();
 
-  muteBtn.classList.toggle("muted", sfx.muted);
-  muteBtn.addEventListener("click", () => {
-    sfx.unlock();
-    const m = sfx.toggle();
+  const menuMute = $("menuMute");
+  function syncMute() {
+    const m = sfx.muted;
     muteBtn.classList.toggle("muted", m);
     muteBtn.setAttribute("aria-label", m ? "Unmute sound" : "Mute sound");
-  });
+    menuMute.textContent = m ? "Sound: off" : "Sound: on";
+  }
+  syncMute();
+  for (const b of [muteBtn, menuMute]) b.addEventListener("click", () => { sfx.unlock(); sfx.toggle(); syncMute(); });
 
   // ---------- Layout ----------
   let W = 0, H = 0, DPR = 1, u = 1;
@@ -303,8 +349,15 @@
   // ---------- Game state ----------
   let uploaded = 0, missed = 0, streak = 0, bestStreak = 0, missRun = 0;
   let best = parseInt(store.get("fileshot-best", "0"), 10) || 0;
+  let bestTimed = parseInt(store.get("fileshot-best-timed", "0"), 10) || 0;
   let level = 1, levelUploads = 0, levelStart = 0, gameStart = 0;
-  let over = false;
+  let mode = "classic";      // "classic" | "timed"
+  let phase = "menu";        // "menu" | "playing" | "paused" | "over"
+  let over = false;          // true once the run has ended (results screen)
+  let revives = 0, revivesUsed = 0, swishes = 0;
+  let timeLeft = TIMED_SECONDS, timeBonus = 0;
+  let demoAt = 1.2;          // next attract-mode throw on the start screen
+  const seenWeights = new Set();
 
   const waiting = [];       // files sitting on the floor, ready to throw
   let held = null;          // the file being dragged
@@ -327,6 +380,7 @@
   let time = 0;
 
   function levelParams() {
+    if (mode === "timed") return { target: Math.min(L.capacity, 3), interval: 0.9 };
     if (level === 1) return { target: 1, interval: 0.6 };
     if (level === 2) return { target: Math.min(L.capacity, levelUploads < 4 ? 2 : 3), interval: 1.3 };
     const wave = Math.floor(levelUploads / 5);
@@ -419,31 +473,40 @@
   function spawn() {
     const info = queue.length ? queue.shift() : makeFakeFile();
     const x = clamp(pickSpawnX(), L.margin, W - L.margin);
-    const y = L.floorY - L.cardH / 2;
+    const y = restY(info);
     const f = { ...info, ox: x, oy: y, x, y, rot: 0, state: "spawning", t: 0, born: time };
-    if (level === 3) f.deadline = time + 0.45 + DEADLINE;
+    if (mode === "classic" && level === 3) f.deadline = time + 0.45 + DEADLINE;
     waiting.push(f);
     sfx.pop();
+    // explain light and heavy files the first time each shows up
+    if (W_(f).hint && !seenWeights.has(f.weight)) {
+      seenWeights.add(f.weight);
+      floatText(W_(f).hint, clamp(x, 130, W - 130), y - L.cardH * 1.1, { size: Math.max(12, 14 * u), color: W_(f).chip, weight: 700, life: 2.4 });
+    }
   }
+
+  const restY = (f) => L.floorY - (L.cardH / 2) * W_(f).scale;
 
   function repositionWaiting() {
     for (const f of waiting) {
-      f.oy = L.floorY - L.cardH / 2;
+      f.oy = restY(f);
       f.ox = clamp(f.ox, L.margin, W - L.margin);
       if (f !== held) { f.x = f.ox; f.y = f.oy; }
     }
   }
 
   // ---------- Throwing ----------
-  function dragInfo() {
+  function dragInfo(f) {
     const dx = drag.px - drag.sx, dy = drag.py - drag.sy;
     const len = Math.hypot(dx, dy);
     if (len < 0.001) return { nx: 0, ny: 0, power: 0, ox: 0, oy: 0 };
     const nx = dx / len, ny = dy / len;
+    // heavy files need a longer pull for full power, light files a shorter one
+    const maxPull = L.maxPull * W_(f).pull;
     // file follows the finger up to maxPull, then gets a little rubber-band resistance
-    const shown = len <= L.maxPull ? len : L.maxPull + (len - L.maxPull) * 0.12;
-    const power = clamp(len / L.maxPull, 0, 1);
-    return { nx, ny, power, ox: nx * Math.min(shown, L.maxPull * 1.15), oy: ny * Math.min(shown, L.maxPull * 1.15) };
+    const shown = len <= maxPull ? len : maxPull + (len - maxPull) * 0.12;
+    const power = clamp(len / maxPull, 0, 1);
+    return { nx, ny, power, ox: nx * Math.min(shown, maxPull * 1.15), oy: ny * Math.min(shown, maxPull * 1.15) };
   }
 
   function launchVelocity(f, info) {
@@ -456,7 +519,7 @@
 
   function launch() {
     const f = held;
-    const info = dragInfo();
+    const info = dragInfo(f);
     held = null;
     if (info.power < 0.12) {
       f.state = "returning";
@@ -464,21 +527,38 @@
     }
     const v = launchVelocity(f, info);
     waiting.splice(waiting.indexOf(f), 1);
-    flying.push({
+    flying.push(makeFlying(f, v.vx, v.vy));
+    shots++;
+    nextSpawnAt = Math.max(nextSpawnAt, time + 0.45);
+    sfx.whoosh(info.power);
+  }
+
+  function makeFlying(f, vx, vy) {
+    return {
       ...f,
-      vx: v.vx, vy: v.vy,
+      vx, vy,
       y0: f.y,
-      spin: v.vx * 0.004 / u + rand(-1.5, 1.5),
+      spin: vx * 0.004 / u + rand(-1.5, 1.5),
       flip: 0,
       flipV: rand(3, 6) * (Math.random() < 0.5 ? -1 : 1),
       depth: 0,
       aboveRim: false, behind: false, banked: false, scored: false,
       rimHits: 0, landed: false, restT: 0, age: 0, alpha: 1, fading: false,
       trail: [],
-    });
-    shots++;
-    nextSpawnAt = Math.max(nextSpawnAt, time + 0.45);
-    sfx.whoosh(info.power);
+    };
+  }
+
+  // Start screen: lob a file at the hoop every couple of seconds
+  function demoThrow() {
+    const info = makeFakeFile();
+    const side = Math.random() < 0.5 ? -1 : 1;
+    const x0 = clamp(L.cx + side * rand(W * 0.18, W * 0.36), L.margin, W - L.margin);
+    const y0 = restY(info);
+    const T = rand(1.0, 1.12);
+    const tx = L.cx + rand(-0.25, 0.25) * L.rx, ty = L.rimY;
+    const vx = (tx - x0) / T;
+    const vy = (ty - y0 - 0.5 * L.g * T * T) / T;
+    flying.push(makeFlying({ ...info, x: x0, y: y0, rot: 0, demo: true }, vx, vy));
   }
 
   function expire(f) {
@@ -538,6 +618,7 @@
 
   // ---------- HUD ----------
   function bump(el) {
+    if (!el) return;
     el.classList.remove("bump");
     void el.offsetWidth; // restart the CSS animation
     el.classList.add("bump");
@@ -548,23 +629,34 @@
     return total ? Math.round((uploaded / total) * 100) : null;
   }
 
+  const fmtClock = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
+
   function updateHud() {
     uploadedEl.textContent = uploaded;
     missedEl.textContent = missed;
     const r = successRate();
     rateEl.textContent = r === null ? "–" : r + "%";
-    levelNameEl.textContent = `Level ${level} · ${LEVELS[level].name}`;
-    const deadline = level === 3;
+    const timed = mode === "timed";
+    const deadline = !timed && level === 3;
+    levelNameEl.textContent = timed ? `Timed run · ${fmtClock(Math.ceil(timeLeft))}` : `Level ${level} · ${LEVELS[level].name}`;
     levelBarEl.hidden = deadline;
+    levelBarEl.classList.toggle("clock", timed);
     pipsEl.hidden = !deadline;
     if (deadline) {
       pipsEl.querySelectorAll("i").forEach((p, i) => p.classList.toggle("on", i < missRun));
       pipsEl.classList.toggle("danger", missRun >= MAX_MISS_RUN);
     }
+    revivesEl.hidden = timed || revives === 0;
+    revivesCountEl.textContent = revives;
   }
 
   function updateLevelBar() {
-    if (level === 1) {
+    if (mode === "timed") {
+      const frac = clamp(timeLeft / TIMED_SECONDS, 0, 1);
+      levelFillEl.style.width = `${frac * 100}%`;
+      levelNameEl.textContent = `Timed run · ${fmtClock(Math.ceil(timeLeft))}`;
+      levelBarEl.classList.toggle("low", timeLeft <= 10);
+    } else if (level === 1) {
       const cfg = LEVELS[1];
       const p = Math.max(levelUploads / cfg.uploadsToPass, (time - levelStart) / cfg.secondsToPass);
       levelFillEl.style.width = `${clamp(p, 0, 1) * 100}%`;
@@ -595,20 +687,46 @@
   // ---------- Scoring ----------
   function onScore(f) {
     f.scored = true;
-    if (over) return;
+    const clean = f.rimHits === 0 && !f.banked;
+
+    // attract-mode throws on the start screen: just the swish, no score
+    if (f.demo || phase !== "playing") {
+      rings.push({ x: L.cx, y: L.rimY, t: 0, life: 0.6 });
+      for (const n of net) if (n.r > 0) n.vy += 220 * u * (n.r / NET_R);
+      confetti(L.cx, L.rimY, 18);
+      return;
+    }
+
     uploaded++;
     levelUploads++;
     streak++;
     bestStreak = Math.max(bestStreak, streak);
     missRun = 0;
-    updateHud();
-    bump(scorePill.querySelector(".stat.up"));
 
-    const clean = f.rimHits === 0 && !f.banked;
+    if (clean) swishes++;
     const label = f.banked ? "Bank shot!" : clean ? "Swish!" : pick(["Nice!", "Rattled in!", "Got it!"]);
     floatText("+1", L.cx, L.rimY - 30 * u, { size: 40 * u, color: C.orange, life: 1.1 });
     floatText(label, L.cx, L.rimY - 74 * u, { size: 22 * u, color: C.text, weight: 700, life: 1.2 });
     if (streak >= 3) floatText(`🔥 ${streak} in a row`, L.cx, L.rimY + L.netH + 34 * u, { size: 17 * u, color: C.orange, weight: 700, life: 1.5 });
+
+    // timed run: clean swishes buy a little more time
+    if (mode === "timed" && clean) {
+      timeLeft += SWISH_BONUS;
+      timeBonus += SWISH_BONUS;
+      floatText(`+${SWISH_BONUS}s`, L.cx + L.rx + 34 * u, L.rimY - 40 * u, { size: 22 * u, color: "#16a34a", weight: 800, life: 1.2 });
+      sfx.bonus();
+    }
+
+    // classic: every 10 in a row earns a revive
+    if (mode === "classic" && streak % REVIVE_EVERY === 0) {
+      revives++;
+      floatText("+1 revive", L.cx, L.rimY + L.netH + 60 * u, { size: 20 * u, color: "#16a34a", weight: 800, life: 1.8 });
+      sfx.earn();
+      setTimeout(() => bump(revivesEl), 0);
+    }
+
+    updateHud();
+    bump(scorePill.querySelector(".stat.up"));
 
     confetti(L.cx, L.rimY, clean ? 70 : 45);
     rings.push({ x: L.cx, y: L.rimY, t: 0, life: 0.6 });
@@ -618,10 +736,11 @@
     sfx.ding();
     addToast(f);
 
-    if (level === 2 && levelUploads >= LEVELS[2].uploadsToPass) setLevel(3);
+    if (mode === "classic" && level === 2 && levelUploads >= LEVELS[2].uploadsToPass) setLevel(3);
   }
 
   function onMiss(f) {
+    if (f.demo) return;
     let msg = "Missed";
     if (f.behind) msg = "Over the board";
     else if (!f.aboveRim) msg = "Airball";
@@ -631,17 +750,42 @@
   }
 
   function registerMiss(msg, x, y) {
-    if (over) return;
+    if (phase !== "playing") return;
     missed++;
     streak = 0;
     floatText(msg, x, y, { size: 16 * u, color: msg === "Expired" ? "#ef4444" : C.muted, weight: 700, life: 1.1 });
-    if (level === 3) {
+    if (mode === "classic" && level === 3) {
       missRun++;
-      if (missRun > MAX_MISS_RUN) { updateHud(); gameOver(); return; }
-      if (missRun === MAX_MISS_RUN) floatText("Last chance!", L.cx, L.rimY + L.netH + 60 * u, { size: 20 * u, color: "#ef4444", weight: 800, life: 1.6 });
+      if (missRun > MAX_MISS_RUN) {
+        if (revives > 0) {
+          useRevive();
+        } else {
+          updateHud();
+          endGame();
+          return;
+        }
+      } else if (missRun === MAX_MISS_RUN) {
+        const extra = revives > 0 ? ` (${revives} revive${revives > 1 ? "s" : ""} left)` : "";
+        floatText(revives > 0 ? `Revive ready${extra}` : "Last chance!", L.cx, L.rimY + L.netH + 60 * u,
+          { size: 20 * u, color: revives > 0 ? "#16a34a" : "#ef4444", weight: 800, life: 1.6 });
+      }
     }
     updateHud();
     bump(scorePill.querySelector(".stat.miss"));
+  }
+
+  function useRevive() {
+    revives--;
+    revivesUsed++;
+    missRun = 0;
+    floatText("Revived!", L.cx, L.rimY - 60 * u, { size: 34 * u, color: "#16a34a", weight: 800, life: 1.6 });
+    rings.push({ x: L.cx, y: L.rimY, t: 0, life: 0.9, revive: true });
+    confetti(L.cx, L.rimY + L.netH, 40);
+    sfx.revive();
+    shake(4);
+    // a fresh start: give the waiting files their full time again
+    for (const f of waiting) if (f.deadline !== undefined) f.deadline = time + DEADLINE;
+    bump(revivesEl);
   }
 
   function addToast(f) {
@@ -676,16 +820,94 @@
     setTimeout(() => { li.classList.add("out"); setTimeout(() => li.remove(), 400); }, 4200);
   }
 
-  // ---------- Game over / restart / share ----------
+  // ---------- Screens: start, pause, results ----------
   const SHARE_URL = window.FILESHOT_SHARE_URL || location.href.split("#")[0];
 
   function shareText() {
     const r = successRate();
-    return `I uploaded ${uploaded} file${uploaded === 1 ? "" : "s"} with ${r === null ? 0 : r}% success in File Shot 🏀 Can you beat me?`;
+    const files = `${uploaded} file${uploaded === 1 ? "" : "s"}`;
+    if (mode === "timed") return `I uploaded ${files} in a ${TIMED_SECONDS}-second timed run in File Shot 🏀 Can you beat me?`;
+    return `I uploaded ${files} with ${r === null ? 0 : r}% success in File Shot 🏀 Can you beat me?`;
   }
 
-  function gameOver() {
+  function verdict() {
+    const r = successRate() || 0;
+    const tier = uploaded === 0 ? "zero"
+      : (mode === "timed" ? uploaded >= 25 : uploaded >= 25 || (uploaded >= 15 && r >= 60)) ? "high"
+      : uploaded >= 8 ? "mid" : "low";
+    return pick(VERDICTS[tier]);
+  }
+
+  function clearBoard() {
+    waiting.length = 0; flying.length = 0; poofs.length = 0;
+    held = null; drag = null;
+    canvas.style.cursor = "default";
+    trayEl.textContent = "";
+    clearTimeout(bannerTimer);
+    bannerEl.hidden = true;
+  }
+
+  function showScreen(name) {
+    menuEl.hidden = name !== "menu";
+    pauseEl.hidden = name !== "pause";
+    overEl.hidden = name !== "over";
+    hudEl.classList.toggle("hidden", name === "menu");
+    for (const el of [menuEl, pauseEl, overEl]) el.classList.toggle("show", !el.hidden);
+    const focusTarget = { menu: "startClassic", pause: "resume", over: "restart" }[name];
+    if (focusTarget) setTimeout(() => $(focusTarget).focus({ preventScroll: true }), 50);
+  }
+
+  function updateMenuBests() {
+    $("menuBest").textContent = best;
+    $("menuBestTimed").textContent = bestTimed;
+  }
+
+  function startGame(m) {
+    sfx.unlock();
+    mode = m;
+    clearBoard();
+    uploaded = 0; missed = 0; streak = 0; bestStreak = 0; missRun = 0;
+    revives = 0; revivesUsed = 0; swishes = 0;
+    level = 1; levelUploads = 0; levelStart = time; gameStart = time;
+    timeLeft = TIMED_SECONDS; timeBonus = 0;
+    over = false;
+    firstSpawn = true;
+    nextSpawnAt = time + 0.5;
+    phase = "playing";
+    showScreen("none");
+    if (mode === "timed") showBanner("Timed run", `${TIMED_SECONDS} seconds`, `Upload as many files as you can. Swishes add +${SWISH_BONUS}s.`);
+    else showBanner("Level 1", "Warm-up", "Drag a file toward the hoop and let go.");
+    updateHud();
+    updateLevelBar();
+  }
+
+  function pauseGame() {
+    if (phase !== "playing") return;
+    phase = "paused";
+    if (held) { held.state = "returning"; held = null; drag = null; }
+    showScreen("pause");
+  }
+
+  function resumeGame() {
+    if (phase !== "paused") return;
+    phase = "playing";
+    showScreen("none");
+  }
+
+  function exitToMenu() {
+    clearBoard();
+    phase = "menu";
+    over = false;
+    demoAt = time + 1;
+    updateMenuBests();
+    $("goodbye").hidden = true;
+    $("menuMain").hidden = false;
+    showScreen("menu");
+  }
+
+  function endGame() {
     over = true;
+    phase = "over";
     if (held) { held = null; drag = null; canvas.style.cursor = "default"; }
     for (const f of waiting.splice(0)) poofs.push({ f, x: f.x, y: f.y, rot: f.rot, t: 0, quiet: true });
     clearTimeout(bannerTimer);
@@ -693,44 +915,39 @@
     sfx.gameOver();
     shake(6);
 
-    const isBest = uploaded > best;
-    if (isBest) { best = uploaded; store.set("fileshot-best", String(best)); }
+    const timed = mode === "timed";
+    const prevBest = timed ? bestTimed : best;
+    const isBest = uploaded > prevBest && uploaded > 0;
+    if (isBest) {
+      if (timed) { bestTimed = uploaded; store.set("fileshot-best-timed", String(uploaded)); }
+      else { best = uploaded; store.set("fileshot-best", String(uploaded)); }
+    }
     const r = successRate();
     const secs = Math.round(time - gameStart);
+
+    $("overKicker").textContent = timed ? "Time's up" : "Game over";
+    $("overVerdict").textContent = verdict();
     $("finalUploaded").textContent = uploaded;
+    $("finalUnit").textContent = uploaded === 1 ? "file uploaded" : "files uploaded";
+    $("finalBest").textContent = isBest ? "New best!" : `Best: ${timed ? bestTimed : best}`;
+    $("finalBest").classList.toggle("new", isBest);
     $("finalMissed").textContent = missed;
     $("finalRate").textContent = r === null ? "–" : r + "%";
     $("finalStreak").textContent = bestStreak;
     $("finalTime").textContent = secs >= 60 ? `${Math.floor(secs / 60)}m ${secs % 60}s` : `${secs}s`;
-    $("finalBest").textContent = isBest && uploaded > 0 ? "New best!" : `Best: ${best}`;
-    $("finalBest").classList.toggle("new", isBest && uploaded > 0);
-    const text = shareText();
-    const full = `${text} ${SHARE_URL}`;
+    $("finalExtraLabel").textContent = timed ? "Bonus time" : "Level";
+    $("finalExtra").textContent = timed ? `+${timeBonus}s` : `${level} · ${LEVELS[level].name}`;
+    $("finalLastLabel").textContent = timed ? "Swishes" : "Revives used";
+    $("finalLast").textContent = timed ? swishes : revivesUsed;
+
+    const full = `${shareText()} ${SHARE_URL}`;
     $("shareX").href = `https://twitter.com/intent/tweet?text=${encodeURIComponent(full)}`;
     $("shareWa").href = `https://wa.me/?text=${encodeURIComponent(full)}`;
     $("shareText").value = full;
     $("shareFallback").hidden = true;
     $("shareNote").textContent = "";
 
-    setTimeout(() => {
-      overEl.hidden = false;
-      overEl.classList.add("show");
-      $("restart").focus({ preventScroll: true });
-    }, 900);
-  }
-
-  function restart() {
-    overEl.hidden = true;
-    overEl.classList.remove("show");
-    uploaded = 0; missed = 0; streak = 0; bestStreak = 0; missRun = 0;
-    level = 1; levelUploads = 0; levelStart = time; gameStart = time;
-    over = false;
-    waiting.length = 0; flying.length = 0; poofs.length = 0;
-    held = null; drag = null;
-    firstSpawn = true;
-    nextSpawnAt = time + 0.3;
-    updateHud();
-    updateLevelBar();
+    setTimeout(() => { if (phase === "over") showScreen("over"); }, 900);
   }
 
   async function shareScore() {
@@ -759,8 +976,41 @@
     }
   }
 
-  $("restart").addEventListener("click", () => { sfx.unlock(); restart(); });
+  // Browsers only let a page close a window it opened itself (or an installed app window),
+  // so if closing doesn't work we show a goodbye message instead.
+  function exitGame() {
+    try { window.close(); } catch (e) { /* ignore */ }
+    setTimeout(() => {
+      $("menuMain").hidden = true;
+      $("goodbye").hidden = false;
+      $("goodbyeBack").focus({ preventScroll: true });
+    }, 150);
+  }
+
+  $("startClassic").addEventListener("click", () => startGame("classic"));
+  $("startTimed").addEventListener("click", () => startGame("timed"));
+  $("howTo").addEventListener("click", () => {
+    const panel = $("howPanel");
+    panel.hidden = !panel.hidden;
+    $("howTo").setAttribute("aria-expanded", String(!panel.hidden));
+  });
+  $("exitGame").addEventListener("click", exitGame);
+  $("goodbyeBack").addEventListener("click", () => { $("goodbye").hidden = true; $("menuMain").hidden = false; });
+  $("pauseBtn").addEventListener("click", pauseGame);
+  $("resume").addEventListener("click", resumeGame);
+  $("pauseRestart").addEventListener("click", () => startGame(mode));
+  $("pauseExit").addEventListener("click", exitToMenu);
+  $("restart").addEventListener("click", () => startGame(mode));
   $("share").addEventListener("click", shareScore);
+  $("overExit").addEventListener("click", exitToMenu);
+
+  window.addEventListener("keydown", (e) => {
+    if (e.key !== "Escape") return;
+    if (phase === "playing") pauseGame();
+    else if (phase === "paused") resumeGame();
+  });
+  // don't let deadlines or the clock run while the tab is in the background
+  document.addEventListener("visibilitychange", () => { if (document.hidden) pauseGame(); });
 
   // ---------- Physics ----------
   function rimCollide(f) {
@@ -862,7 +1112,7 @@
 
     // floor
     const scale = 1 - 0.3 * f.depth;
-    const half = L.cardH * 0.45 * scale;
+    const half = L.cardH * 0.45 * scale * W_(f).scale;
     if (!f.behind && f.y > L.floorY - half) {
       f.y = L.floorY - half;
       if (f.vy > 0) {
@@ -889,7 +1139,7 @@
       f.t += dt / 0.45;
       if (f.t >= 1) { f.t = 1; f.state = "idle"; }
     } else if (f.state === "dragging") {
-      const info = dragInfo();
+      const info = dragInfo(f);
       f.x = lerp(f.x, f.ox + info.ox, 1 - Math.exp(-30 * dt));
       f.y = lerp(f.y, f.oy + info.oy, 1 - Math.exp(-30 * dt));
       f.rot = lerp(f.rot, clamp(info.nx * info.power * 0.35, -0.35, 0.35), 1 - Math.exp(-12 * dt));
@@ -910,10 +1160,21 @@
 
   // ---------- Main update ----------
   function update(dt) {
+    if (phase === "paused") return; // everything freezes, including timers
     time += dt;
 
-    if (!over) {
-      if (level === 1) {
+    if (phase === "menu" && time >= demoAt) {
+      demoThrow();
+      demoAt = time + rand(1.8, 2.6);
+    }
+
+    if (phase === "playing" && mode === "timed") {
+      timeLeft -= dt;
+      if (timeLeft <= 0) { timeLeft = 0; updateLevelBar(); endGame(); }
+    }
+
+    if (phase === "playing") {
+      if (mode === "classic" && level === 1) {
         const cfg = LEVELS[1];
         if (levelUploads >= cfg.uploadsToPass || time - levelStart >= cfg.secondsToPass) setLevel(2);
       }
@@ -1221,6 +1482,8 @@
   // `timer` (0..1) draws the deadline ring around the card.
   function drawFile(f, x, y, scale, rot, flip, alpha, lift, timer) {
     const w = L.cardW, h = L.cardH, fold = 15 * u, r = 7 * u;
+    const wt = W_(f);
+    scale *= wt.scale;
     const fx = Math.cos(flip);
     const back = fx < 0;
     ctx.save();
@@ -1248,7 +1511,7 @@
     ctx.shadowColor = C.shadow;
     ctx.shadowBlur = (8 + 22 * lift) * u;
     ctx.shadowOffsetY = (3 + 12 * lift) * u;
-    ctx.translate(0, 2.5 * u);
+    ctx.translate(0, wt.edge * u); // thicker paper stack for heavier files
     body();
     ctx.fillStyle = C.paperEdge;
     ctx.fill();
@@ -1305,6 +1568,19 @@
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
       ctx.fillText(f.ext, bx + bw / 2, by + bh / 2 + 0.5 * u);
+
+      // weight tag
+      if (wt.label) {
+        ctx.font = `800 ${6.6 * u}px Inter, system-ui, sans-serif`;
+        const cw = ctx.measureText(wt.label).width + 8 * u, ch = 11 * u;
+        const cx0 = -w / 2 + 9 * u, cy0 = -h / 2 + 8 * u;
+        rr(cx0, cy0, cw, ch, 5.5 * u);
+        ctx.fillStyle = wt.chip;
+        ctx.fill();
+        ctx.fillStyle = "#fff";
+        ctx.textAlign = "left";
+        ctx.fillText(wt.label, cx0 + 4 * u, cy0 + ch / 2 + 0.4 * u);
+      }
     } else {
       // back of the sheet: faint show-through lines
       ctx.fillStyle = C.dark ? "rgba(255,255,255,0.04)" : "rgba(20,30,50,0.04)";
@@ -1373,7 +1649,7 @@
   function drawTrajectory() {
     if (!held) return;
     const f = held;
-    const info = dragInfo();
+    const info = dragInfo(f);
     if (info.power < 0.05) return;
     const v = launchVelocity(f, info);
     let x = f.x, y = f.y, vx = v.vx, vy = v.vy;
@@ -1554,7 +1830,7 @@
   }
 
   function drawHint() {
-    if (hintAlpha <= 0 || over) return;
+    if (hintAlpha <= 0 || phase !== "playing") return;
     ctx.save();
     ctx.globalAlpha = hintAlpha * (0.65 + 0.35 * Math.sin(time * 3));
     ctx.fillStyle = C.muted;
@@ -1574,8 +1850,8 @@
 
     drawDropZone();
 
-    for (const f of flying) if (!f.behind) drawFloorShadow(f.x, f.y, 1 - 0.3 * f.depth, f.alpha);
-    for (const f of waiting) drawFloorShadow(f.x, f.state === "dragging" ? f.y : L.floorY - L.cardH / 2, 1, 1);
+    for (const f of flying) if (!f.behind) drawFloorShadow(f.x, f.y, (1 - 0.3 * f.depth) * W_(f).scale, f.alpha);
+    for (const f of waiting) drawFloorShadow(f.x, f.state === "dragging" ? f.y : restY(f), W_(f).scale, 1);
 
     const layers = [[], [], []];
     for (const f of flying) layers[fileLayer(f)].push(f);
@@ -1606,7 +1882,7 @@
   }
 
   function fileAt(p) {
-    if (over || held) return null;
+    if (phase !== "playing" || held) return null;
     const radius = Math.max(L.cardH * 0.85, 56);
     let bestF = null, bestD = radius;
     for (const f of waiting) {
@@ -1655,7 +1931,7 @@
   // Real files: drop them anywhere on the page (or use the "Your files" button)
   function loadRealFiles(list) {
     const files = Array.from(list || []);
-    if (!files.length || over) return;
+    if (!files.length || phase === "over") return;
     files.slice(0, 50).forEach((f) => queue.push(makeRealFile(f)));
     // swap the waiting fake files for real ones straight away
     for (const f of waiting) {
@@ -1716,12 +1992,18 @@
 
   layout();
   updateHud();
+  exitToMenu(); // open on the start screen
 
   // a tiny hook for automated checks
   window.__fileShot = {
     get uploaded() { return uploaded; }, get missed() { return missed; }, get level() { return level; },
     get over() { return over; }, get L() { return L; }, waiting, flying,
+    get phase() { return phase; }, get mode() { return mode; }, get revives() { return revives; },
+    get timeLeft() { return timeLeft; }, set timeLeft(v) { timeLeft = v; },
+    set streak(v) { streak = v; },
     setLevel: (n) => setLevel(n),
+    testScore: () => onScore({ ...makeFakeFile(), rimHits: 0, banked: false }),
+    testMiss: () => registerMiss("Missed", L.cx, L.rimY + L.netH),
   };
 
   const STEP = 1 / 120;
