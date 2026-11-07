@@ -1,0 +1,18 @@
+{
+  "name": "File Shot",
+  "short_name": "File Shot",
+  "description": "Drag a file, aim at the hoop, and upload it with a swish.",
+  "id": "./game.html",
+  "start_url": "./game.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#eceff4",
+  "theme_color": "#eceff4",
+  "categories": ["games"],
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

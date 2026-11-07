@@ -1,0 +1,1739 @@
+/* =========================================================
+   File Shot — drag a file, aim at the hoop, upload with a swish.
+
+   How it plays:
+   - Grab a file card and drag it toward where you want it to go.
+     The further you drag, the harder you throw (dotted line = aim).
+   - Let go and the file flies in that direction.
+   - Through the rim = uploaded. Anything else = missed.
+
+   Difficulty curve:
+   - Level 1 "Warm-up": one file at a time.
+   - Level 2 "Rush hour": several files at once (after 3 uploads or 35 s).
+   - Level 3 "Deadline": after 8 uploads in level 2. Every file has
+     8 seconds (shown as a ring around the card) and more files keep
+     coming. Miss more than 5 in a row and the game ends.
+
+   Everything is drawn on one <canvas>. The scene fakes depth:
+   the file shrinks as it travels "into" the screen, passes in front
+   of the hoop on the way up and drops through the rim on the way down.
+   ========================================================= */
+(() => {
+  "use strict";
+
+  // ---------- Tuning ----------
+  const LEVELS = {
+    1: { name: "Warm-up", uploadsToPass: 3, secondsToPass: 35 },
+    2: { name: "Rush hour", uploadsToPass: 8 },
+    3: { name: "Deadline" },
+  };
+  const DEADLINE = 8;          // seconds per file in level 3
+  const MAX_MISS_RUN = 5;      // the 6th miss in a row ends the game
+  const BANNER_TIME = 2.6;
+
+  // ---------- DOM ----------
+  const $ = (id) => document.getElementById(id);
+  const canvas = $("scene");
+  const ctx = canvas.getContext("2d");
+  const scorePill = $("scorePill");
+  const uploadedEl = $("uploaded");
+  const missedEl = $("missed");
+  const rateEl = $("rate");
+  const levelNameEl = $("levelName");
+  const levelFillEl = $("levelFill");
+  const levelBarEl = $("levelBar");
+  const pipsEl = $("pips");
+  const trayEl = $("tray");
+  const muteBtn = $("mute");
+  const picker = $("picker");
+  const bannerEl = $("banner");
+  const overEl = $("over");
+
+  const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const darkQuery = matchMedia("(prefers-color-scheme: dark)");
+
+  // localStorage can throw (private mode, blocked storage) — never let it break the game
+  const store = {
+    get(k, d) { try { const v = localStorage.getItem(k); return v === null ? d : v; } catch (e) { return d; } },
+    set(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* ignore */ } },
+  };
+
+  // ---------- Helpers ----------
+  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+  const lerp = (a, b, t) => a + (b - a) * t;
+  const rand = (a, b) => a + Math.random() * (b - a);
+  const pick = (arr) => arr[(Math.random() * arr.length) | 0];
+  const easeOutBack = (t) => { const c = 1.9; return 1 + (c + 1) * Math.pow(t - 1, 3) + c * Math.pow(t - 1, 2); };
+
+  function rr(x, y, w, h, r) {
+    r = Math.min(r, w / 2, h / 2);
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r);
+    ctx.arcTo(x, y, x + w, y, r);
+    ctx.closePath();
+  }
+
+  // rounded rect that starts at the top centre, so a dashed stroke reads like a countdown ring
+  function rrFromTop(x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + w / 2, y);
+    ctx.lineTo(x + w - r, y);
+    ctx.arcTo(x + w, y, x + w, y + r, r);
+    ctx.lineTo(x + w, y + h - r);
+    ctx.arcTo(x + w, y + h, x + w - r, y + h, r);
+    ctx.lineTo(x + r, y + h);
+    ctx.arcTo(x, y + h, x, y + h - r, r);
+    ctx.lineTo(x, y + r);
+    ctx.arcTo(x, y, x + r, y, r);
+    ctx.closePath();
+    return 2 * (w + h) - 8 * r + 2 * Math.PI * r;
+  }
+
+  function mixColor(a, b, t) {
+    const pa = a.match(/\w\w/g).map((h) => parseInt(h, 16));
+    const pb = b.match(/\w\w/g).map((h) => parseInt(h, 16));
+    return `rgb(${pa.map((v, i) => Math.round(lerp(v, pb[i], t))).join(",")})`;
+  }
+  function timerColor(frac) {
+    if (frac > 0.5) return mixColor("f5a524", "22c55e", (frac - 0.5) / 0.5);
+    return mixColor("ef4444", "f5a524", frac / 0.5);
+  }
+
+  // ---------- Colours (read from CSS tokens so dark mode just works) ----------
+  let C = {};
+  function readColors() {
+    const cs = getComputedStyle(document.documentElement);
+    const g = (n) => cs.getPropertyValue(n).trim();
+    const t = document.documentElement.getAttribute("data-theme");
+    const dark = t ? t === "dark" : darkQuery.matches;
+    C = {
+      dark,
+      bg: g("--bg"), bg2: g("--bg2"), surface: g("--surface"), text: g("--text"),
+      muted: g("--muted"), line: g("--line"), accent: g("--accent"), orange: g("--orange"),
+      paperA: dark ? "#2c313b" : "#ffffff",
+      paperB: dark ? "#232730" : "#f1f3f7",
+      paperEdge: dark ? "#14171c" : "#cfd5de",
+      paperLine: dark ? "#454c59" : "#dde2e9",
+      paperFold: dark ? "#3d4450" : "#e4e8ee",
+      paperBack: dark ? "#262a33" : "#e9edf2",
+      netFront: dark ? "rgba(205,212,224,0.75)" : "rgba(120,130,146,0.85)",
+      netBack: dark ? "rgba(160,170,186,0.32)" : "rgba(150,160,175,0.45)",
+      shadow: dark ? "rgba(0,0,0,0.55)" : "rgba(25,35,60,0.22)",
+    };
+  }
+  readColors();
+  darkQuery.addEventListener?.("change", readColors);
+  new MutationObserver(readColors).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+
+  // ---------- File types ----------
+  const TYPE_COLORS = {
+    PDF: "#e5484d", DOC: "#2f6fed", DOCX: "#2f6fed", TXT: "#2f6fed", MD: "#2f6fed",
+    XLS: "#1f9d55", XLSX: "#1f9d55", CSV: "#1f9d55",
+    PNG: "#8e4ec6", JPG: "#8e4ec6", JPEG: "#8e4ec6", GIF: "#8e4ec6", WEBP: "#8e4ec6", SVG: "#8e4ec6", HEIC: "#8e4ec6",
+    MP4: "#e54d9a", MOV: "#e54d9a", WEBM: "#e54d9a", MP3: "#e54d9a", WAV: "#e54d9a",
+    PPT: "#f26b1d", PPTX: "#f26b1d", KEY: "#f26b1d",
+    ZIP: "#d99a0b", RAR: "#d99a0b", "7Z": "#d99a0b",
+    FIG: "#0ea5e9", PSD: "#0ea5e9", AI: "#0ea5e9", SKETCH: "#0ea5e9",
+  };
+  const FAKE_FILES = [
+    ["final_fileeeee", "PDF"], ["final_v2_REAL", "DOCX"], ["invoice_march", "PDF"],
+    ["resume_2026", "PDF"], ["pitch_deck", "PPTX"], ["IMG_4021", "PNG"],
+    ["taxes_dont_open", "XLSX"], ["presentation_FINAL_final", "PPTX"], ["cat_memes", "ZIP"],
+    ["budget_q4", "XLSX"], ["logo_v37", "FIG"], ["vacation_reel", "MP4"],
+    ["notes_from_meeting", "DOCX"], ["moodboard", "PNG"], ["backup_old_old", "ZIP"],
+    ["contract_signed", "PDF"], ["wireframes_v9", "FIG"], ["screenshot_3am", "PNG"],
+  ];
+
+  function formatSize(bytes) {
+    if (bytes < 1024) return bytes + " B";
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(0) + " KB";
+    return (bytes / 1024 / 1024).toFixed(1) + " MB";
+  }
+
+  function makeFakeFile() {
+    const [name, ext] = pick(FAKE_FILES);
+    return { name, ext, color: TYPE_COLORS[ext], size: formatSize((rand(0.05, 24) * 1024 * 1024) | 0) };
+  }
+
+  function makeRealFile(file) {
+    const dot = file.name.lastIndexOf(".");
+    const ext = (dot > 0 ? file.name.slice(dot + 1) : "FILE").toUpperCase().slice(0, 4);
+    const name = dot > 0 ? file.name.slice(0, dot) : file.name;
+    return { name, ext, color: TYPE_COLORS[ext] || "#64748b", size: formatSize(file.size), real: true };
+  }
+
+  // ---------- Sound (tiny Web Audio synth, no files needed) ----------
+  const sfx = (() => {
+    let ac = null, noiseBuf = null;
+    let muted = store.get("fileshot-muted", "0") === "1";
+
+    function unlock() {
+      if (!ac) {
+        try {
+          ac = new (window.AudioContext || window.webkitAudioContext)();
+          noiseBuf = ac.createBuffer(1, ac.sampleRate, ac.sampleRate);
+          const d = noiseBuf.getChannelData(0);
+          for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+        } catch (e) { ac = null; }
+      }
+      if (ac && ac.state === "suspended") ac.resume();
+    }
+
+    function env(g, t, peak, dur, attack = 0.01) {
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.linearRampToValueAtTime(peak, t + attack);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    }
+
+    function noise(dur, type, f0, f1, q, peak, delay = 0) {
+      if (!ac || muted) return;
+      const t = ac.currentTime + delay;
+      const src = ac.createBufferSource();
+      src.buffer = noiseBuf;
+      const filt = ac.createBiquadFilter();
+      filt.type = type;
+      filt.frequency.setValueAtTime(f0, t);
+      filt.frequency.exponentialRampToValueAtTime(f1, t + dur);
+      filt.Q.value = q;
+      const g = ac.createGain();
+      env(g, t, peak, dur, dur * 0.2);
+      src.connect(filt).connect(g).connect(ac.destination);
+      src.start(t, Math.random() * 0.5);
+      src.stop(t + dur + 0.05);
+    }
+
+    function tone(f0, f1, dur, type, peak, delay = 0) {
+      if (!ac || muted) return;
+      const t = ac.currentTime + delay;
+      const o = ac.createOscillator();
+      o.type = type;
+      o.frequency.setValueAtTime(f0, t);
+      o.frequency.exponentialRampToValueAtTime(f1, t + dur);
+      const g = ac.createGain();
+      env(g, t, peak, dur, 0.005);
+      o.connect(g).connect(ac.destination);
+      o.start(t);
+      o.stop(t + dur + 0.05);
+    }
+
+    return {
+      unlock,
+      get muted() { return muted; },
+      toggle() { muted = !muted; store.set("fileshot-muted", muted ? "1" : "0"); return muted; },
+      whoosh(p) { noise(0.3, "bandpass", 350, 1200 + p * 1400, 1.4, 0.1 + p * 0.12); },
+      swish() { noise(0.45, "bandpass", 4200, 1100, 0.8, 0.32); noise(0.25, "highpass", 6000, 3000, 0.5, 0.08, 0.05); },
+      clank(s) {
+        tone(520, 505, 0.35, "triangle", 0.05 + 0.12 * s);
+        tone(1290, 1270, 0.25, "sine", 0.03 + 0.06 * s);
+        tone(2210, 2190, 0.12, "sine", 0.02 + 0.03 * s);
+      },
+      thud() { tone(160, 60, 0.22, "sine", 0.4); noise(0.1, "lowpass", 900, 300, 0.7, 0.18); },
+      ding() { tone(1318.5, 1318.5, 0.4, "sine", 0.1, 0.08); tone(1975.5, 1975.5, 0.6, "sine", 0.09, 0.2); },
+      pop() { tone(500, 900, 0.09, "sine", 0.04); },
+      thump() { tone(110, 70, 0.12, "sine", 0.15); },
+      tick() { tone(1800, 1700, 0.04, "square", 0.025); },
+      expire() { tone(420, 180, 0.28, "sawtooth", 0.06); noise(0.2, "lowpass", 1200, 200, 0.8, 0.08); },
+      levelUp() { [523.25, 659.25, 783.99, 1046.5].forEach((f, i) => tone(f, f, 0.25, "triangle", 0.09, i * 0.09)); },
+      gameOver() { [392, 329.63, 261.63].forEach((f, i) => tone(f, f * 0.98, 0.4, "triangle", 0.1, i * 0.16)); },
+    };
+  })();
+
+  muteBtn.classList.toggle("muted", sfx.muted);
+  muteBtn.addEventListener("click", () => {
+    sfx.unlock();
+    const m = sfx.toggle();
+    muteBtn.classList.toggle("muted", m);
+    muteBtn.setAttribute("aria-label", m ? "Unmute sound" : "Mute sound");
+  });
+
+  // ---------- Layout ----------
+  let W = 0, H = 0, DPR = 1, u = 1;
+  const L = {};
+
+  function layout() {
+    W = window.innerWidth;
+    H = window.innerHeight;
+    DPR = Math.min(window.devicePixelRatio || 1, 2.5);
+    canvas.width = Math.round(W * DPR);
+    canvas.height = Math.round(H * DPR);
+
+    u = clamp(Math.min(W * 1.25, H * 0.8) / 720, 0.55, 1.2);
+
+    const headerH = W < 640 ? 150 : 140;
+    L.cx = W / 2;
+
+    // hoop
+    L.rx = 66 * u;          // rim half-width (to tube centre)
+    L.ry = L.rx * 0.24;     // rim perspective squash
+    L.tube = 4.2 * u;       // rim thickness radius
+    L.netH = 92 * u;
+    L.bw = Math.min(270 * u, W - 48);
+    L.bh = 170 * u;
+
+    const dzAbove = 118 * u; // space for the "Drop files here" text above the board
+    const minRim = headerH + dzAbove + L.bh + 14 * u;
+    L.rimY = Math.max(minRim, H * (W < 640 ? 0.45 : 0.42));
+    L.rimY = Math.min(L.rimY, H - 280 * u);
+    L.rimY = Math.max(L.rimY, headerH + 120 * u); // never under the header on tiny screens
+
+    L.bx = L.cx - L.bw / 2;
+    L.by = L.rimY - 8 * u - L.bh;
+
+    // drop zone card around the board
+    const dzW = Math.min(W - 32, L.bw + 190 * u);
+    L.dz = { x: L.cx - dzW / 2, y: L.by - dzAbove, w: dzW, h: L.rimY + 4 * u - (L.by - dzAbove) };
+
+    // files
+    L.cardW = 60 * u;
+    L.cardH = 76 * u;
+    L.fr = 17 * u;          // collision radius at hoop depth
+    L.floorY = H - Math.max(48 * u, 40);
+    L.g = 1750 * u;
+    L.maxPull = clamp(150 * u, 95, 175);
+    L.margin = 20 + L.cardW * 0.8;
+    L.capacity = clamp(Math.floor((W - 2 * L.margin) / (L.cardW * 1.75)) + 1, 2, 5);
+
+    bannerEl.style.top = `${L.rimY + L.netH + 16 * u}px`;
+    buildNet();
+  }
+
+  // ---------- Game state ----------
+  let uploaded = 0, missed = 0, streak = 0, bestStreak = 0, missRun = 0;
+  let best = parseInt(store.get("fileshot-best", "0"), 10) || 0;
+  let level = 1, levelUploads = 0, levelStart = 0, gameStart = 0;
+  let over = false;
+
+  const waiting = [];       // files sitting on the floor, ready to throw
+  let held = null;          // the file being dragged
+  const flying = [];        // files in the air / on the floor after a throw
+  const poofs = [];         // files that ran out of time
+  const particles = [];
+  const texts = [];
+  const rings = [];
+  const queue = [];         // real files the player dropped in
+  let drag = null;
+  let nextSpawnAt = 0.2;
+  let firstSpawn = true;
+  let shots = 0;
+  let hintAlpha = 1;
+  let rimDy = 0, rimV = 0;
+  let boardShake = 0;
+  let camShake = 0;
+  let osDrag = false, osDragTimer = 0;
+  let bannerTimer = 0;
+  let time = 0;
+
+  function levelParams() {
+    if (level === 1) return { target: 1, interval: 0.6 };
+    if (level === 2) return { target: Math.min(L.capacity, levelUploads < 4 ? 2 : 3), interval: 1.3 };
+    const wave = Math.floor(levelUploads / 5);
+    return { target: Math.min(L.capacity, 2 + wave), interval: Math.max(0.8, 2.0 - wave * 0.25) };
+  }
+
+  // ---------- Net (spring mesh hanging from the rim) ----------
+  const NET_N = 16, NET_R = 6;
+  let net = [];
+
+  function buildNet() {
+    net = [];
+    for (let r = 0; r < NET_R; r++) {
+      for (let i = 0; i < NET_N; i++) {
+        net.push({ r, i, th: (i / NET_N) * Math.PI * 2 + Math.PI / NET_N, dx: 0, dy: 0, vx: 0, vy: 0 });
+      }
+    }
+  }
+  const node = (r, i) => net[r * NET_N + ((i + NET_N) % NET_N)];
+
+  function netPos(n) {
+    const t = n.r / (NET_R - 1);
+    const f = 1 - 0.45 * t;
+    return {
+      x: L.cx + L.rx * f * Math.cos(n.th) + n.dx,
+      y: L.rimY + L.ry * f * Math.sin(n.th) + L.netH * t + n.dy + (n.r === 0 ? rimDy : rimDy * (1 - t)),
+    };
+  }
+
+  function updateNet(dt) {
+    const K = 260, KC = 320, D = 9;
+    for (const n of net) {
+      if (n.r === 0) continue;
+      const a = node(n.r - 1, n.i), l = node(n.r, n.i - 1), rt = node(n.r, n.i + 1);
+      const b = n.r < NET_R - 1 ? node(n.r + 1, n.i) : null;
+      const cnt = b ? 4 : 3;
+      const ax = (a.dx + l.dx + rt.dx + (b ? b.dx : 0)) / cnt;
+      const ay = (a.dy + l.dy + rt.dy + (b ? b.dy : 0)) / cnt;
+      n.vx += (-K * n.dx + KC * (ax - n.dx) - D * n.vx) * dt;
+      n.vy += (-K * n.dy + KC * (ay - n.dy) - D * n.vy) * dt;
+    }
+    const lim = L.netH * 0.6;
+    for (const n of net) {
+      if (n.r === 0) continue;
+      n.dx = clamp(n.dx + n.vx * dt, -lim, lim);
+      n.dy = clamp(n.dy + n.vy * dt, -lim, lim);
+    }
+  }
+
+  function pushNet(f) {
+    if (Math.abs(f.x - L.cx) > L.rx + L.fr * 2) return;
+    if (f.y < L.rimY - L.fr || f.y > L.rimY + L.netH + L.fr) return;
+    const R = L.fr * 1.2;
+    for (const n of net) {
+      if (n.r === 0) continue;
+      const p = netPos(n);
+      const dx = p.x - f.x, dy = p.y - f.y;
+      const d2 = dx * dx + dy * dy;
+      if (d2 < R * R && d2 > 0.01) {
+        const d = Math.sqrt(d2);
+        const push = (R - d) * 0.9;
+        n.dx += (dx / d) * push;
+        n.dy += (dy / d) * push;
+        n.vx += f.vx * 0.05;
+        n.vy += f.vy * 0.05;
+      }
+    }
+  }
+
+  // ---------- Spawning ----------
+  function pickSpawnX() {
+    if (firstSpawn) {
+      firstSpawn = false;
+      return L.cx - Math.min(W * 0.3, 290 * u);
+    }
+    // pick the spot furthest from the files already waiting
+    const lo = L.margin, hi = W - L.margin;
+    let bestX = rand(lo, hi), bestScore = -Infinity;
+    for (let k = 0; k < 30; k++) {
+      const x = rand(lo, hi);
+      let d = Infinity;
+      for (const f of waiting) d = Math.min(d, Math.abs(f.ox - x));
+      const centrePenalty = Math.abs(x - L.cx) < W * 0.08 ? 40 : 0;
+      const score = Math.min(d, W) - centrePenalty + rand(0, 20);
+      if (score > bestScore) { bestScore = score; bestX = x; }
+    }
+    return bestX;
+  }
+
+  function spawn() {
+    const info = queue.length ? queue.shift() : makeFakeFile();
+    const x = clamp(pickSpawnX(), L.margin, W - L.margin);
+    const y = L.floorY - L.cardH / 2;
+    const f = { ...info, ox: x, oy: y, x, y, rot: 0, state: "spawning", t: 0, born: time };
+    if (level === 3) f.deadline = time + 0.45 + DEADLINE;
+    waiting.push(f);
+    sfx.pop();
+  }
+
+  function repositionWaiting() {
+    for (const f of waiting) {
+      f.oy = L.floorY - L.cardH / 2;
+      f.ox = clamp(f.ox, L.margin, W - L.margin);
+      if (f !== held) { f.x = f.ox; f.y = f.oy; }
+    }
+  }
+
+  // ---------- Throwing ----------
+  function dragInfo() {
+    const dx = drag.px - drag.sx, dy = drag.py - drag.sy;
+    const len = Math.hypot(dx, dy);
+    if (len < 0.001) return { nx: 0, ny: 0, power: 0, ox: 0, oy: 0 };
+    const nx = dx / len, ny = dy / len;
+    // file follows the finger up to maxPull, then gets a little rubber-band resistance
+    const shown = len <= L.maxPull ? len : L.maxPull + (len - L.maxPull) * 0.12;
+    const power = clamp(len / L.maxPull, 0, 1);
+    return { nx, ny, power, ox: nx * Math.min(shown, L.maxPull * 1.15), oy: ny * Math.min(shown, L.maxPull * 1.15) };
+  }
+
+  function launchVelocity(f, info) {
+    // calibrated so ~70% power is a comfortable shot on any screen
+    const rise = Math.max(f.oy - L.by, 120 * u);
+    const vmax = Math.sqrt(2 * L.g * rise) * 1.02;
+    const v = vmax * (0.18 + 0.82 * info.power);
+    return { vx: info.nx * v, vy: info.ny * v };
+  }
+
+  function launch() {
+    const f = held;
+    const info = dragInfo();
+    held = null;
+    if (info.power < 0.12) {
+      f.state = "returning";
+      return;
+    }
+    const v = launchVelocity(f, info);
+    waiting.splice(waiting.indexOf(f), 1);
+    flying.push({
+      ...f,
+      vx: v.vx, vy: v.vy,
+      y0: f.y,
+      spin: v.vx * 0.004 / u + rand(-1.5, 1.5),
+      flip: 0,
+      flipV: rand(3, 6) * (Math.random() < 0.5 ? -1 : 1),
+      depth: 0,
+      aboveRim: false, behind: false, banked: false, scored: false,
+      rimHits: 0, landed: false, restT: 0, age: 0, alpha: 1, fading: false,
+      trail: [],
+    });
+    shots++;
+    nextSpawnAt = Math.max(nextSpawnAt, time + 0.45);
+    sfx.whoosh(info.power);
+  }
+
+  function expire(f) {
+    const i = waiting.indexOf(f);
+    if (i >= 0) waiting.splice(i, 1);
+    if (held === f) { held = null; drag = null; canvas.style.cursor = "default"; }
+    poofs.push({ f, x: f.x, y: f.y, rot: f.rot, t: 0 });
+    sparks(f.x, f.y, 14, "#ef4444");
+    sfx.expire();
+    nextSpawnAt = Math.max(nextSpawnAt, time + 0.5);
+    registerMiss("Expired", f.x, f.y - L.cardH * 0.9);
+  }
+
+  // ---------- Effects ----------
+  const CONFETTI = ["#f26b1d", "#2a6fe8", "#22c55e", "#eab308", "#ec4899", "#8b5cf6"];
+
+  function confetti(x, y, n) {
+    if (reduceMotion) n = Math.round(n * 0.3);
+    for (let i = 0; i < n; i++) {
+      const a = rand(-Math.PI * 0.95, -Math.PI * 0.05);
+      const s = rand(250, 750) * u;
+      particles.push({
+        x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s,
+        rot: rand(0, 6.28), vr: rand(-12, 12),
+        w: rand(5, 10) * u, h: rand(3, 6) * u,
+        color: pick(CONFETTI), life: rand(1.1, 1.8), t: 0, kind: "confetti",
+      });
+    }
+  }
+
+  function sparks(x, y, n, color) {
+    for (let i = 0; i < n; i++) {
+      const a = rand(0, Math.PI * 2), s = rand(80, 260) * u;
+      particles.push({ x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life: rand(0.3, 0.6), t: 0, r: rand(1.5, 3) * u, color, kind: "spark" });
+    }
+  }
+
+  function floatText(text, x, y, opts = {}) {
+    texts.push({ text, x, y, t: 0, life: opts.life || 1.3, size: opts.size || 26, color: opts.color || C.text, weight: opts.weight || 800 });
+  }
+
+  function shake(amount) {
+    if (!reduceMotion) camShake = Math.max(camShake, amount);
+  }
+
+  function showBanner(kicker, title, sub) {
+    bannerEl.querySelector(".kicker").textContent = kicker;
+    bannerEl.querySelector(".title").textContent = title;
+    bannerEl.querySelector(".sub").textContent = sub;
+    bannerEl.hidden = false;
+    bannerEl.classList.remove("show");
+    void bannerEl.offsetWidth;
+    bannerEl.classList.add("show");
+    clearTimeout(bannerTimer);
+    bannerTimer = setTimeout(() => { bannerEl.hidden = true; }, BANNER_TIME * 1000);
+  }
+
+  // ---------- HUD ----------
+  function bump(el) {
+    el.classList.remove("bump");
+    void el.offsetWidth; // restart the CSS animation
+    el.classList.add("bump");
+  }
+
+  function successRate() {
+    const total = uploaded + missed;
+    return total ? Math.round((uploaded / total) * 100) : null;
+  }
+
+  function updateHud() {
+    uploadedEl.textContent = uploaded;
+    missedEl.textContent = missed;
+    const r = successRate();
+    rateEl.textContent = r === null ? "–" : r + "%";
+    levelNameEl.textContent = `Level ${level} · ${LEVELS[level].name}`;
+    const deadline = level === 3;
+    levelBarEl.hidden = deadline;
+    pipsEl.hidden = !deadline;
+    if (deadline) {
+      pipsEl.querySelectorAll("i").forEach((p, i) => p.classList.toggle("on", i < missRun));
+      pipsEl.classList.toggle("danger", missRun >= MAX_MISS_RUN);
+    }
+  }
+
+  function updateLevelBar() {
+    if (level === 1) {
+      const cfg = LEVELS[1];
+      const p = Math.max(levelUploads / cfg.uploadsToPass, (time - levelStart) / cfg.secondsToPass);
+      levelFillEl.style.width = `${clamp(p, 0, 1) * 100}%`;
+    } else if (level === 2) {
+      levelFillEl.style.width = `${clamp(levelUploads / LEVELS[2].uploadsToPass, 0, 1) * 100}%`;
+    }
+  }
+
+  // ---------- Levels ----------
+  function setLevel(n) {
+    level = n;
+    levelUploads = 0;
+    levelStart = time;
+    missRun = 0;
+    if (n === 2) {
+      showBanner("Level 2", "Rush hour", "More files are piling up. Upload as many as you can.");
+      nextSpawnAt = time + 1.0;
+    } else if (n === 3) {
+      showBanner("Level 3", "Deadline", "Each file has 8 seconds. Miss 6 in a row and it's game over.");
+      for (const f of waiting) f.deadline = time + BANNER_TIME + DEADLINE;
+      nextSpawnAt = time + BANNER_TIME;
+    }
+    sfx.levelUp();
+    confetti(L.cx, L.rimY + L.netH, 30);
+    updateHud();
+  }
+
+  // ---------- Scoring ----------
+  function onScore(f) {
+    f.scored = true;
+    if (over) return;
+    uploaded++;
+    levelUploads++;
+    streak++;
+    bestStreak = Math.max(bestStreak, streak);
+    missRun = 0;
+    updateHud();
+    bump(scorePill.querySelector(".stat.up"));
+
+    const clean = f.rimHits === 0 && !f.banked;
+    const label = f.banked ? "Bank shot!" : clean ? "Swish!" : pick(["Nice!", "Rattled in!", "Got it!"]);
+    floatText("+1", L.cx, L.rimY - 30 * u, { size: 40 * u, color: C.orange, life: 1.1 });
+    floatText(label, L.cx, L.rimY - 74 * u, { size: 22 * u, color: C.text, weight: 700, life: 1.2 });
+    if (streak >= 3) floatText(`🔥 ${streak} in a row`, L.cx, L.rimY + L.netH + 34 * u, { size: 17 * u, color: C.orange, weight: 700, life: 1.5 });
+
+    confetti(L.cx, L.rimY, clean ? 70 : 45);
+    rings.push({ x: L.cx, y: L.rimY, t: 0, life: 0.6 });
+    for (const n of net) if (n.r > 0) n.vy += 220 * u * (n.r / NET_R);
+    shake(clean ? 5 : 3);
+    sfx.swish();
+    sfx.ding();
+    addToast(f);
+
+    if (level === 2 && levelUploads >= LEVELS[2].uploadsToPass) setLevel(3);
+  }
+
+  function onMiss(f) {
+    let msg = "Missed";
+    if (f.behind) msg = "Over the board";
+    else if (!f.aboveRim) msg = "Airball";
+    else if (f.rimHits > 0) msg = "Rim out";
+    else if (f.banked) msg = "Off the glass";
+    registerMiss(msg, L.cx, L.rimY + L.netH + 34 * u);
+  }
+
+  function registerMiss(msg, x, y) {
+    if (over) return;
+    missed++;
+    streak = 0;
+    floatText(msg, x, y, { size: 16 * u, color: msg === "Expired" ? "#ef4444" : C.muted, weight: 700, life: 1.1 });
+    if (level === 3) {
+      missRun++;
+      if (missRun > MAX_MISS_RUN) { updateHud(); gameOver(); return; }
+      if (missRun === MAX_MISS_RUN) floatText("Last chance!", L.cx, L.rimY + L.netH + 60 * u, { size: 20 * u, color: "#ef4444", weight: 800, life: 1.6 });
+    }
+    updateHud();
+    bump(scorePill.querySelector(".stat.miss"));
+  }
+
+  function addToast(f) {
+    const li = document.createElement("li");
+    li.className = "toast";
+    const badge = document.createElement("span");
+    badge.className = "badge";
+    badge.style.background = f.color;
+    badge.textContent = f.ext;
+    const info = document.createElement("div");
+    info.className = "info";
+    const name = document.createElement("span");
+    name.className = "name";
+    name.textContent = `${f.name}.${f.ext.toLowerCase()}`;
+    const sub = document.createElement("span");
+    sub.className = "sub";
+    sub.textContent = `${f.size} · uploading…`;
+    const bar = document.createElement("div");
+    bar.className = "bar";
+    const fill = document.createElement("i");
+    bar.appendChild(fill);
+    info.append(name, sub, bar);
+    const check = document.createElement("span");
+    check.className = "check";
+    check.textContent = "✓";
+    li.append(badge, info, check);
+    trayEl.appendChild(li);
+    while (trayEl.children.length > 3) trayEl.firstElementChild.remove();
+
+    requestAnimationFrame(() => requestAnimationFrame(() => { fill.style.width = "100%"; }));
+    setTimeout(() => { li.classList.add("done"); sub.textContent = `${f.size} · uploaded`; }, 950);
+    setTimeout(() => { li.classList.add("out"); setTimeout(() => li.remove(), 400); }, 4200);
+  }
+
+  // ---------- Game over / restart / share ----------
+  const SHARE_URL = window.FILESHOT_SHARE_URL || location.href.split("#")[0];
+
+  function shareText() {
+    const r = successRate();
+    return `I uploaded ${uploaded} file${uploaded === 1 ? "" : "s"} with ${r === null ? 0 : r}% success in File Shot 🏀 Can you beat me?`;
+  }
+
+  function gameOver() {
+    over = true;
+    if (held) { held = null; drag = null; canvas.style.cursor = "default"; }
+    for (const f of waiting.splice(0)) poofs.push({ f, x: f.x, y: f.y, rot: f.rot, t: 0, quiet: true });
+    clearTimeout(bannerTimer);
+    bannerEl.hidden = true;
+    sfx.gameOver();
+    shake(6);
+
+    const isBest = uploaded > best;
+    if (isBest) { best = uploaded; store.set("fileshot-best", String(best)); }
+    const r = successRate();
+    const secs = Math.round(time - gameStart);
+    $("finalUploaded").textContent = uploaded;
+    $("finalMissed").textContent = missed;
+    $("finalRate").textContent = r === null ? "–" : r + "%";
+    $("finalStreak").textContent = bestStreak;
+    $("finalTime").textContent = secs >= 60 ? `${Math.floor(secs / 60)}m ${secs % 60}s` : `${secs}s`;
+    $("finalBest").textContent = isBest && uploaded > 0 ? "New best!" : `Best: ${best}`;
+    $("finalBest").classList.toggle("new", isBest && uploaded > 0);
+    const text = shareText();
+    const full = `${text} ${SHARE_URL}`;
+    $("shareX").href = `https://twitter.com/intent/tweet?text=${encodeURIComponent(full)}`;
+    $("shareWa").href = `https://wa.me/?text=${encodeURIComponent(full)}`;
+    $("shareText").value = full;
+    $("shareFallback").hidden = true;
+    $("shareNote").textContent = "";
+
+    setTimeout(() => {
+      overEl.hidden = false;
+      overEl.classList.add("show");
+      $("restart").focus({ preventScroll: true });
+    }, 900);
+  }
+
+  function restart() {
+    overEl.hidden = true;
+    overEl.classList.remove("show");
+    uploaded = 0; missed = 0; streak = 0; bestStreak = 0; missRun = 0;
+    level = 1; levelUploads = 0; levelStart = time; gameStart = time;
+    over = false;
+    waiting.length = 0; flying.length = 0; poofs.length = 0;
+    held = null; drag = null;
+    firstSpawn = true;
+    nextSpawnAt = time + 0.3;
+    updateHud();
+    updateLevelBar();
+  }
+
+  async function shareScore() {
+    const text = shareText();
+    const note = $("shareNote");
+    if (navigator.share) {
+      try {
+        await navigator.share({ title: "File Shot", text, url: SHARE_URL });
+        note.textContent = "Shared!";
+        return;
+      } catch (e) {
+        if (e && e.name === "AbortError") return;
+      }
+    }
+    const full = `${text} ${SHARE_URL}`;
+    try {
+      await navigator.clipboard.writeText(full);
+      note.textContent = "Copied. Paste it to your friends.";
+    } catch (e) {
+      const box = $("shareFallback");
+      box.hidden = false;
+      const input = $("shareText");
+      input.focus();
+      input.select();
+      note.textContent = "Copy the text below and send it to your friends.";
+    }
+  }
+
+  $("restart").addEventListener("click", () => { sfx.unlock(); restart(); });
+  $("share").addEventListener("click", shareScore);
+
+  // ---------- Physics ----------
+  function rimCollide(f) {
+    const min = L.fr + L.tube;
+    for (const ex of [L.cx - L.rx, L.cx + L.rx]) {
+      const ey = L.rimY + rimDy;
+      const dx = f.x - ex, dy = f.y - ey;
+      const d2 = dx * dx + dy * dy;
+      if (d2 >= min * min || d2 < 0.0001) continue;
+      const d = Math.sqrt(d2);
+      const nx = dx / d, ny = dy / d;
+      f.x = ex + nx * min;
+      f.y = ey + ny * min;
+      const vn = f.vx * nx + f.vy * ny;
+      if (vn < 0) {
+        const e = 0.5;
+        f.vx -= (1 + e) * vn * nx;
+        f.vy -= (1 + e) * vn * ny;
+        const tx = -ny, ty = nx;
+        const vt = f.vx * tx + f.vy * ty;
+        f.vx -= vt * 0.12 * tx;
+        f.vy -= vt * 0.12 * ty;
+        f.spin += (vt * 0.012) / u;
+        if (-vn > 70 * u) {
+          f.rimHits++;
+          sfx.clank(clamp(-vn / (900 * u), 0, 1));
+          rimV += clamp(-vn * 0.05, -60, 60) * (ny < 0 ? 1 : -1);
+          sparks(ex, ey, 6, C.orange);
+        }
+      }
+      // never balance perfectly on top of the rim
+      if (Math.abs(f.vx) < 15 * u && Math.abs(f.vy) < 15 * u) f.vx += (f.x < ex ? -1 : 1) * 40 * u;
+    }
+  }
+
+  function onApex(f) {
+    const inX = f.x > L.bx - L.fr * 0.3 && f.x < L.bx + L.bw + L.fr * 0.3;
+    if (!inX || !f.aboveRim) return;
+    if (f.y < L.by - L.fr * 0.2) {
+      f.behind = true; // sailed over the backboard
+    } else if (f.y <= L.by + L.bh) {
+      // reached the glass: it absorbs most of the energy and drops the file down
+      f.banked = true;
+      f.vx *= 0.32;
+      f.vy = 30 * u;
+      f.spin *= 0.4;
+      f.flipV *= 0.5;
+      boardShake = 1;
+      shake(3);
+      sfx.thud();
+      rings.push({ x: f.x, y: f.y, t: 0, life: 0.45, glass: true });
+    }
+  }
+
+  function updateFlying(f, dt) {
+    f.age += dt;
+    if (f.fading) {
+      f.alpha -= dt * 3;
+      return;
+    }
+    const prevY = f.y, prevVy = f.vy;
+
+    f.vy += L.g * dt;
+    if (f.scored && f.y > L.rimY && f.y < L.rimY + L.netH) {
+      // the net catches and centres the file
+      f.vx += (L.cx - f.x) * 9 * dt;
+      f.vx *= 1 - 3 * dt;
+      f.vy *= 1 - 2.4 * dt;
+    }
+    if (f.landed) {
+      f.vx *= 1 - 7 * dt;
+      f.spin *= 1 - 7 * dt;
+      f.flipV *= 1 - 7 * dt;
+      f.rot = lerp(f.rot, Math.round(f.rot / (Math.PI * 2)) * Math.PI * 2, 8 * dt);
+      f.flip = lerp(f.flip, Math.round(f.flip / Math.PI) * Math.PI, 8 * dt);
+    }
+
+    f.x += f.vx * dt;
+    f.y += f.vy * dt;
+    f.rot += f.spin * dt;
+    f.flip += f.flipV * dt;
+
+    if (!f.aboveRim && f.y < L.rimY - L.fr - L.tube - 2) f.aboveRim = true;
+    if (!f.aboveRim) f.depth = Math.max(f.depth, clamp((f.y0 - f.y) / (f.y0 - L.rimY), 0, 1));
+    else f.depth = 1;
+
+    if (prevVy < 0 && f.vy >= 0) onApex(f);
+
+    if (f.aboveRim && !f.behind) {
+      rimCollide(f);
+      if (!f.scored && prevY < L.rimY && f.y >= L.rimY &&
+          f.x > L.cx - L.rx + L.tube && f.x < L.cx + L.rx - L.tube) {
+        onScore(f);
+      }
+      pushNet(f);
+    }
+
+    if (f.behind && f.y > L.by + L.bh * 0.55) f.fading = true;
+
+    // floor
+    const scale = 1 - 0.3 * f.depth;
+    const half = L.cardH * 0.45 * scale;
+    if (!f.behind && f.y > L.floorY - half) {
+      f.y = L.floorY - half;
+      if (f.vy > 0) {
+        if (f.vy > 120 * u) sfx.thump();
+        f.vy *= -0.32;
+        f.vx *= 0.75;
+        f.spin *= 0.6;
+        if (Math.abs(f.vy) < 90 * u) { f.vy = 0; f.landed = true; }
+      }
+    }
+    if (f.landed) f.restT += dt;
+
+    f.trail.push({ x: f.x, y: f.y });
+    if (f.trail.length > 9) f.trail.shift();
+
+    const out = f.x < -150 || f.x > W + 150 || f.y > H + 150;
+    if (out || (f.landed && f.restT > 0.5) || f.age > 6) f.fading = true;
+
+    if (f.fading && !f.scored) onMiss(f);
+  }
+
+  function updateWaiting(f, dt) {
+    if (f.state === "spawning") {
+      f.t += dt / 0.45;
+      if (f.t >= 1) { f.t = 1; f.state = "idle"; }
+    } else if (f.state === "dragging") {
+      const info = dragInfo();
+      f.x = lerp(f.x, f.ox + info.ox, 1 - Math.exp(-30 * dt));
+      f.y = lerp(f.y, f.oy + info.oy, 1 - Math.exp(-30 * dt));
+      f.rot = lerp(f.rot, clamp(info.nx * info.power * 0.35, -0.35, 0.35), 1 - Math.exp(-12 * dt));
+    } else if (f.state === "returning") {
+      f.x = lerp(f.x, f.ox, 1 - Math.exp(-14 * dt));
+      f.y = lerp(f.y, f.oy, 1 - Math.exp(-14 * dt));
+      f.rot = lerp(f.rot, 0, 1 - Math.exp(-14 * dt));
+      if (Math.hypot(f.x - f.ox, f.y - f.oy) < 0.5) { f.x = f.ox; f.y = f.oy; f.state = "idle"; }
+    }
+    if (f.deadline !== undefined) {
+      const left = f.deadline - time;
+      // a soft tick each second in the last 3 seconds
+      const sec = Math.ceil(left);
+      if (left < 3 && sec !== f.lastTick && sec > 0) { f.lastTick = sec; sfx.tick(); }
+      if (left <= 0) expire(f);
+    }
+  }
+
+  // ---------- Main update ----------
+  function update(dt) {
+    time += dt;
+
+    if (!over) {
+      if (level === 1) {
+        const cfg = LEVELS[1];
+        if (levelUploads >= cfg.uploadsToPass || time - levelStart >= cfg.secondsToPass) setLevel(2);
+      }
+      const p = levelParams();
+      if (waiting.length < p.target && time >= nextSpawnAt) {
+        spawn();
+        nextSpawnAt = time + p.interval;
+      }
+      for (const f of waiting.slice()) updateWaiting(f, dt);
+    }
+
+    for (const f of flying) updateFlying(f, dt);
+    for (let i = flying.length - 1; i >= 0; i--) if (flying[i].alpha <= 0) flying.splice(i, 1);
+    for (const p of poofs) p.t += dt;
+    for (let i = poofs.length - 1; i >= 0; i--) if (poofs[i].t >= 0.5) poofs.splice(i, 1);
+
+    updateNet(dt);
+
+    // rim wobble spring
+    rimV += (-500 * rimDy - 14 * rimV) * dt;
+    rimDy += rimV * dt;
+
+    boardShake = Math.max(0, boardShake - dt * 3);
+    camShake = Math.max(0, camShake - dt * 18);
+
+    for (const p of particles) {
+      p.t += dt;
+      if (p.kind === "confetti") {
+        p.vy += 900 * u * dt;
+        p.vx *= 1 - 1.6 * dt;
+        p.vy *= 1 - 1.6 * dt;
+        p.rot += p.vr * dt;
+      } else {
+        p.vx *= 1 - 4 * dt;
+        p.vy *= 1 - 4 * dt;
+      }
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+    }
+    for (let i = particles.length - 1; i >= 0; i--) if (particles[i].t >= particles[i].life) particles.splice(i, 1);
+    for (const t of texts) t.t += dt;
+    for (let i = texts.length - 1; i >= 0; i--) if (texts[i].t >= texts[i].life) texts.splice(i, 1);
+    for (const r of rings) r.t += dt;
+    for (let i = rings.length - 1; i >= 0; i--) if (rings[i].t >= rings[i].life) rings.splice(i, 1);
+
+    if (uploaded > 0) hintAlpha = Math.max(0, hintAlpha - dt * 1.5);
+  }
+
+  // ---------- Drawing ----------
+  function drawBackground() {
+    ctx.fillStyle = C.bg;
+    ctx.fillRect(0, 0, W, H);
+
+    // soft spotlight on the hoop
+    const g = ctx.createRadialGradient(L.cx, L.rimY - L.bh * 0.4, 10, L.cx, L.rimY - L.bh * 0.4, Math.max(W, H) * 0.75);
+    g.addColorStop(0, C.dark ? "rgba(91,155,255,0.10)" : "rgba(255,255,255,0.95)");
+    g.addColorStop(1, "rgba(255,255,255,0)");
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, W, H);
+
+    // floor: a faint plane with perspective lines toward the hoop
+    const fy = L.floorY;
+    const fg = ctx.createLinearGradient(0, fy - 70 * u, 0, H);
+    fg.addColorStop(0, "rgba(0,0,0,0)");
+    fg.addColorStop(1, C.dark ? "rgba(0,0,0,0.35)" : "rgba(30,45,80,0.07)");
+    ctx.fillStyle = fg;
+    ctx.fillRect(0, fy - 70 * u, W, H - fy + 70 * u);
+
+    ctx.save();
+    ctx.strokeStyle = C.dark ? "rgba(255,255,255,0.05)" : "rgba(30,45,80,0.06)";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(0, fy + 8 * u);
+    ctx.lineTo(W, fy + 8 * u);
+    const vpY = L.rimY;
+    for (let k = -6; k <= 6; k++) {
+      const bx = L.cx + k * W * 0.14;
+      const t = (fy + 8 * u - vpY) / (H - vpY);
+      ctx.moveTo(lerp(L.cx, bx, t), fy + 8 * u);
+      ctx.lineTo(bx, H);
+    }
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  function drawDropZone() {
+    const d = L.dz;
+    const active = !!held || osDrag;
+    ctx.save();
+    ctx.shadowColor = C.dark ? "rgba(0,0,0,0.4)" : "rgba(30,45,80,0.06)";
+    ctx.shadowBlur = 30 * u;
+    ctx.shadowOffsetY = 10 * u;
+    rr(d.x, d.y, d.w, d.h, 22 * u);
+    ctx.fillStyle = C.dark ? "rgba(27,30,36,0.75)" : "rgba(255,255,255,0.72)";
+    ctx.fill();
+    ctx.restore();
+
+    if (active) {
+      rr(d.x, d.y, d.w, d.h, 22 * u);
+      ctx.fillStyle = C.dark ? "rgba(91,155,255,0.07)" : "rgba(42,111,232,0.05)";
+      ctx.fill();
+    }
+
+    ctx.save();
+    rr(d.x + 1, d.y + 1, d.w - 2, d.h - 2, 21 * u);
+    ctx.setLineDash([8 * u, 7 * u]);
+    ctx.lineDashOffset = active ? -time * 40 : 0;
+    ctx.lineWidth = active ? 2 : 1.6;
+    ctx.strokeStyle = active ? C.accent : C.line;
+    ctx.stroke();
+    ctx.restore();
+
+    // upload icon
+    const ix = L.cx, iy = d.y + 34 * u, s = 11 * u;
+    ctx.save();
+    ctx.strokeStyle = active ? C.accent : C.text;
+    ctx.lineWidth = 2 * u;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    const bob = active ? Math.sin(time * 8) * 2 * u : 0;
+    ctx.beginPath();
+    ctx.moveTo(ix, iy + s * 0.5 + bob);
+    ctx.lineTo(ix, iy - s + bob);
+    ctx.moveTo(ix - s * 0.55, iy - s * 0.45 + bob);
+    ctx.lineTo(ix, iy - s + bob);
+    ctx.lineTo(ix + s * 0.55, iy - s * 0.45 + bob);
+    ctx.moveTo(ix - s, iy + s * 0.15);
+    ctx.lineTo(ix - s, iy + s * 0.85);
+    ctx.quadraticCurveTo(ix - s, iy + s * 1.1, ix - s * 0.75, iy + s * 1.1);
+    ctx.lineTo(ix + s * 0.75, iy + s * 1.1);
+    ctx.quadraticCurveTo(ix + s, iy + s * 1.1, ix + s, iy + s * 0.85);
+    ctx.lineTo(ix + s, iy + s * 0.15);
+    ctx.stroke();
+    ctx.restore();
+
+    ctx.textAlign = "center";
+    ctx.textBaseline = "alphabetic";
+    ctx.fillStyle = C.text;
+    ctx.font = `700 ${Math.max(16, 23 * u)}px Inter, system-ui, sans-serif`;
+    ctx.fillText(osDrag ? "Release to load the file" : "Drop files here", L.cx, d.y + 78 * u);
+    ctx.fillStyle = C.muted;
+    ctx.font = `500 ${Math.max(12, 14.5 * u)}px Inter, system-ui, sans-serif`;
+    ctx.fillText("or take the shot", L.cx, d.y + 100 * u);
+  }
+
+  function drawBoard() {
+    const sx = Math.sin(time * 70) * boardShake * 2.5 * u;
+    const x = L.bx + sx, y = L.by, w = L.bw, h = L.bh, r = 9 * u;
+
+    // shadow cast onto the drop zone
+    ctx.save();
+    ctx.shadowColor = C.shadow;
+    ctx.shadowBlur = 34 * u;
+    ctx.shadowOffsetY = 18 * u;
+    rr(x, y, w, h, r);
+    ctx.fillStyle = C.dark ? "#1c2029" : "#ffffff";
+    ctx.fill();
+    ctx.restore();
+
+    // glass
+    const glass = ctx.createLinearGradient(x, y, x + w * 0.3, y + h);
+    if (C.dark) {
+      glass.addColorStop(0, "rgba(70,82,104,0.95)");
+      glass.addColorStop(1, "rgba(32,38,50,0.95)");
+    } else {
+      glass.addColorStop(0, "rgba(255,255,255,1)");
+      glass.addColorStop(1, "rgba(222,233,246,1)");
+    }
+    rr(x, y, w, h, r);
+    ctx.fillStyle = glass;
+    ctx.fill();
+
+    // reflections
+    ctx.save();
+    rr(x, y, w, h, r);
+    ctx.clip();
+    ctx.fillStyle = C.dark ? "rgba(255,255,255,0.07)" : "rgba(255,255,255,0.75)";
+    ctx.beginPath();
+    ctx.moveTo(x + w * 0.08, y);
+    ctx.lineTo(x + w * 0.36, y);
+    ctx.lineTo(x + w * 0.16, y + h);
+    ctx.lineTo(x - w * 0.12, y + h);
+    ctx.closePath();
+    ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(x + w * 0.42, y);
+    ctx.lineTo(x + w * 0.47, y);
+    ctx.lineTo(x + w * 0.27, y + h);
+    ctx.lineTo(x + w * 0.22, y + h);
+    ctx.closePath();
+    ctx.fill();
+    // inner shade at the bottom
+    const sh = ctx.createLinearGradient(0, y + h * 0.6, 0, y + h);
+    sh.addColorStop(0, "rgba(0,0,0,0)");
+    sh.addColorStop(1, C.dark ? "rgba(0,0,0,0.25)" : "rgba(40,60,100,0.07)");
+    ctx.fillStyle = sh;
+    ctx.fillRect(x, y, w, h);
+    ctx.restore();
+
+    // metallic orange frame
+    const fw = 5.5 * u;
+    const frame = ctx.createLinearGradient(x, y, x, y + h);
+    frame.addColorStop(0, "#ff9a52");
+    frame.addColorStop(0.5, C.orange);
+    frame.addColorStop(1, "#c2490c");
+    rr(x + fw / 2, y + fw / 2, w - fw, h - fw, r - fw / 2);
+    ctx.lineWidth = fw;
+    ctx.strokeStyle = frame;
+    ctx.stroke();
+    rr(x + fw, y + fw, w - fw * 2, h - fw * 2, Math.max(1, r - fw));
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = C.dark ? "rgba(0,0,0,0.35)" : "rgba(120,50,10,0.18)";
+    ctx.stroke();
+    // top highlight
+    ctx.beginPath();
+    ctx.moveTo(x + r, y + 1.2 * u);
+    ctx.lineTo(x + w - r, y + 1.2 * u);
+    ctx.lineWidth = 1.2 * u;
+    ctx.strokeStyle = "rgba(255,255,255,0.6)";
+    ctx.stroke();
+
+    // shooter's square
+    const tw = 92 * u, th = 68 * u;
+    const tx = L.cx + sx - tw / 2, ty = y + h - 12 * u - th;
+    rr(tx, ty, tw, th, 2 * u);
+    ctx.lineWidth = 4 * u;
+    ctx.strokeStyle = C.orange;
+    ctx.stroke();
+  }
+
+  function drawBracket() {
+    const w = 30 * u;
+    const top = L.by + L.bh - 16 * u;
+    const bottom = L.rimY - L.ry + rimDy + 1 * u;
+    const g = ctx.createLinearGradient(L.cx - w / 2, 0, L.cx + w / 2, 0);
+    g.addColorStop(0, "#a83f09");
+    g.addColorStop(0.5, "#e2621a");
+    g.addColorStop(1, "#a83f09");
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.moveTo(L.cx - w / 2, top);
+    ctx.lineTo(L.cx + w / 2, top);
+    ctx.lineTo(L.cx + w * 0.32, bottom);
+    ctx.lineTo(L.cx - w * 0.32, bottom);
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  function strokeRim(a0, a1, front) {
+    const y = L.rimY + rimDy;
+    const lw = L.tube * 2;
+    ctx.save();
+    ctx.lineCap = "round";
+    ctx.beginPath();
+    ctx.ellipse(L.cx, y + (front ? 1.2 * u : 0), L.rx, L.ry, 0, a0, a1);
+    ctx.lineWidth = lw + 2 * u;
+    ctx.strokeStyle = "#9c3a07";
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.ellipse(L.cx, y, L.rx, L.ry, 0, a0, a1);
+    ctx.lineWidth = lw;
+    ctx.strokeStyle = front ? C.orange : "#d4581a";
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.ellipse(L.cx, y - L.tube * 0.45, L.rx, L.ry, 0, a0, a1);
+    ctx.lineWidth = 1.4 * u;
+    ctx.strokeStyle = front ? "rgba(255,200,160,0.9)" : "rgba(255,190,150,0.45)";
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  function drawNet(front) {
+    ctx.save();
+    ctx.lineCap = "round";
+    ctx.lineWidth = (front ? 1.7 : 1.3) * u;
+    ctx.strokeStyle = front ? C.netFront : C.netBack;
+    ctx.beginPath();
+    for (let r = 0; r < NET_R - 1; r++) {
+      for (let i = 0; i < NET_N; i++) {
+        const a = node(r, i);
+        for (const di of [1, -1]) {
+          const b = node(r + 1, i + di);
+          const isFront = Math.sin((a.th + b.th) / 2 + (Math.abs(a.th - b.th) > Math.PI ? Math.PI : 0)) > 0;
+          if (isFront !== front) continue;
+          const pa = netPos(a), pb = netPos(b);
+          ctx.moveTo(pa.x, pa.y);
+          ctx.lineTo(pb.x, pb.y);
+        }
+      }
+    }
+    // bottom ring
+    for (let i = 0; i < NET_N; i++) {
+      const a = node(NET_R - 1, i), b = node(NET_R - 1, i + 1);
+      const isFront = Math.sin(a.th + Math.PI / NET_N) > 0;
+      if (isFront !== front) continue;
+      const pa = netPos(a), pb = netPos(b);
+      ctx.moveTo(pa.x, pa.y);
+      ctx.lineTo(pb.x, pb.y);
+    }
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  // A file card with a folded corner. `flip` tumbles it in 3D.
+  // `timer` (0..1) draws the deadline ring around the card.
+  function drawFile(f, x, y, scale, rot, flip, alpha, lift, timer) {
+    const w = L.cardW, h = L.cardH, fold = 15 * u, r = 7 * u;
+    const fx = Math.cos(flip);
+    const back = fx < 0;
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.translate(x, y);
+    ctx.rotate(rot);
+    ctx.scale(scale * Math.max(Math.abs(fx), 0.06), scale);
+
+    const body = () => {
+      ctx.beginPath();
+      ctx.moveTo(-w / 2 + r, -h / 2);
+      ctx.lineTo(w / 2 - fold, -h / 2);
+      ctx.lineTo(w / 2, -h / 2 + fold);
+      ctx.lineTo(w / 2, h / 2 - r);
+      ctx.arcTo(w / 2, h / 2, w / 2 - r, h / 2, r);
+      ctx.lineTo(-w / 2 + r, h / 2);
+      ctx.arcTo(-w / 2, h / 2, -w / 2, h / 2 - r, r);
+      ctx.lineTo(-w / 2, -h / 2 + r);
+      ctx.arcTo(-w / 2, -h / 2, -w / 2 + r, -h / 2, r);
+      ctx.closePath();
+    };
+
+    // paper thickness + soft drop shadow
+    ctx.save();
+    ctx.shadowColor = C.shadow;
+    ctx.shadowBlur = (8 + 22 * lift) * u;
+    ctx.shadowOffsetY = (3 + 12 * lift) * u;
+    ctx.translate(0, 2.5 * u);
+    body();
+    ctx.fillStyle = C.paperEdge;
+    ctx.fill();
+    ctx.restore();
+
+    body();
+    const g = ctx.createLinearGradient(-w / 2, -h / 2, w / 2, h / 2);
+    g.addColorStop(0, back ? C.paperBack : C.paperA);
+    g.addColorStop(1, C.paperB);
+    ctx.fillStyle = g;
+    ctx.fill();
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = C.dark ? "rgba(255,255,255,0.06)" : "rgba(20,30,50,0.06)";
+    ctx.stroke();
+
+    if (!back) {
+      // folded corner
+      ctx.save();
+      ctx.shadowColor = "rgba(0,0,0,0.12)";
+      ctx.shadowBlur = 4 * u;
+      ctx.shadowOffsetX = -1 * u;
+      ctx.shadowOffsetY = 1.5 * u;
+      ctx.beginPath();
+      ctx.moveTo(w / 2 - fold, -h / 2);
+      ctx.lineTo(w / 2 - fold, -h / 2 + fold - 3 * u);
+      ctx.quadraticCurveTo(w / 2 - fold, -h / 2 + fold, w / 2 - fold + 3 * u, -h / 2 + fold);
+      ctx.lineTo(w / 2, -h / 2 + fold);
+      ctx.closePath();
+      ctx.fillStyle = C.paperFold;
+      ctx.fill();
+      ctx.restore();
+
+      // text lines
+      ctx.fillStyle = C.paperLine;
+      const lx = -w / 2 + 10 * u;
+      [[0.62, -h * 0.2], [0.72, -h * 0.07], [0.48, h * 0.06]].forEach(([lw, ly]) => {
+        rr(lx, ly, (w - 20 * u) * lw, 4 * u, 2 * u);
+        ctx.fill();
+      });
+
+      // type badge
+      const bw = Math.max(26 * u, (f.ext.length * 6.6 + 10) * u), bh = 15 * u;
+      const bx = -w / 2 + 9 * u, by = h / 2 - bh - 9 * u;
+      ctx.save();
+      ctx.shadowColor = f.color + "66";
+      ctx.shadowBlur = 6 * u;
+      ctx.shadowOffsetY = 2 * u;
+      rr(bx, by, bw, bh, 4 * u);
+      ctx.fillStyle = f.color;
+      ctx.fill();
+      ctx.restore();
+      ctx.fillStyle = "#fff";
+      ctx.font = `800 ${8.5 * u}px Inter, system-ui, sans-serif`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(f.ext, bx + bw / 2, by + bh / 2 + 0.5 * u);
+    } else {
+      // back of the sheet: faint show-through lines
+      ctx.fillStyle = C.dark ? "rgba(255,255,255,0.04)" : "rgba(20,30,50,0.04)";
+      for (let k = 0; k < 3; k++) {
+        rr(-w / 2 + 12 * u, -h * 0.2 + k * 10 * u, w - 24 * u, 4 * u, 2 * u);
+        ctx.fill();
+      }
+    }
+
+    // glossy sheen
+    ctx.save();
+    body();
+    ctx.clip();
+    const sheen = ctx.createLinearGradient(-w / 2, -h / 2, w / 2, h / 2);
+    sheen.addColorStop(0, "rgba(255,255,255,0)");
+    sheen.addColorStop(0.45, C.dark ? "rgba(255,255,255,0.06)" : "rgba(255,255,255,0.55)");
+    sheen.addColorStop(0.55, "rgba(255,255,255,0)");
+    ctx.fillStyle = sheen;
+    ctx.fillRect(-w / 2, -h / 2, w, h);
+    // red wash as time runs out
+    if (timer !== undefined && timer < 0.3) {
+      ctx.fillStyle = `rgba(239,68,68,${(0.3 - timer) * 0.6 * (0.6 + 0.4 * Math.sin(time * 14))})`;
+      ctx.fillRect(-w / 2, -h / 2, w, h);
+    }
+    ctx.restore();
+
+    // deadline ring
+    if (timer !== undefined) {
+      const pad = 7 * u, lw = 4 * u;
+      const color = timerColor(timer);
+      const len = rrFromTop(-w / 2 - pad, -h / 2 - pad, w + pad * 2, h + pad * 2, r + pad * 0.8);
+      ctx.lineWidth = lw;
+      ctx.strokeStyle = C.dark ? "rgba(255,255,255,0.1)" : "rgba(20,30,50,0.08)";
+      ctx.stroke();
+      ctx.save();
+      ctx.setLineDash([Math.max(0.001, len * timer), len + 10]);
+      ctx.lineCap = "round";
+      ctx.strokeStyle = color;
+      if (timer < 0.3) { ctx.shadowColor = color; ctx.shadowBlur = 12 * u; }
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    ctx.restore();
+  }
+
+  function drawFloorShadow(x, y, scale, alpha) {
+    const height = clamp((L.floorY - y) / (H * 0.7), 0, 1);
+    const rx = L.cardW * 0.55 * scale * (1 - 0.6 * height);
+    const a = (C.dark ? 0.5 : 0.22) * (1 - height) * alpha;
+    if (a <= 0.01) return;
+    const g = ctx.createRadialGradient(x, L.floorY + 4 * u, 0, x, L.floorY + 4 * u, rx);
+    g.addColorStop(0, `rgba(10,15,30,${a})`);
+    g.addColorStop(1, "rgba(10,15,30,0)");
+    ctx.save();
+    ctx.translate(0, L.floorY + 4 * u);
+    ctx.scale(1, 0.28);
+    ctx.translate(0, -(L.floorY + 4 * u));
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(x, L.floorY + 4 * u, rx, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  function drawTrajectory() {
+    if (!held) return;
+    const f = held;
+    const info = dragInfo();
+    if (info.power < 0.05) return;
+    const v = launchVelocity(f, info);
+    let x = f.x, y = f.y, vx = v.vx, vy = v.vy;
+    const step = 1 / 120;
+    const dots = 20;
+    const ready = info.power >= 0.12;
+    ctx.save();
+    for (let d = 1; d <= dots; d++) {
+      for (let s = 0; s < 4; s++) { vy += L.g * step; x += vx * step; y += vy * step; }
+      if (y > L.floorY) break;
+      const t = d / dots;
+      ctx.globalAlpha = (1 - t) * (ready ? 0.95 : 0.35);
+      ctx.fillStyle = C.orange;
+      ctx.beginPath();
+      ctx.arc(x, y, (4.2 - 2.4 * t) * u, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+
+    // tether + ghost of where the file was picked up
+    ctx.save();
+    ctx.setLineDash([4 * u, 5 * u]);
+    ctx.strokeStyle = C.line;
+    ctx.lineWidth = 1.5 * u;
+    rr(f.ox - L.cardW / 2, f.oy - L.cardH / 2, L.cardW, L.cardH, 8 * u);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(f.ox, f.oy);
+    ctx.lineTo(f.x, f.y);
+    ctx.stroke();
+    ctx.restore();
+
+    // power ring (skipped in level 3, where the deadline ring sits around the card)
+    if (f.deadline !== undefined) return;
+    const pr = L.cardH * 0.72;
+    ctx.save();
+    ctx.lineWidth = 3.5 * u;
+    ctx.lineCap = "round";
+    ctx.strokeStyle = C.dark ? "rgba(255,255,255,0.08)" : "rgba(20,30,50,0.07)";
+    ctx.beginPath();
+    ctx.arc(f.x, f.y, pr, 0, Math.PI * 2);
+    ctx.stroke();
+    const pg = ctx.createLinearGradient(f.x - pr, 0, f.x + pr, 0);
+    pg.addColorStop(0, C.accent);
+    pg.addColorStop(1, C.orange);
+    ctx.strokeStyle = pg;
+    ctx.beginPath();
+    ctx.arc(f.x, f.y, pr, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * info.power);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  function fileLayer(f) {
+    if (f.behind) return 0;
+    if (f.aboveRim && Math.abs(f.x - L.cx) < L.rx + L.fr * 2.2 &&
+        f.y > L.rimY - L.fr * 3.5 && f.y < L.rimY + L.netH + L.fr) return 1;
+    return 2;
+  }
+
+  function drawFlying(f) {
+    const scale = (1 - 0.3 * f.depth) * (f.behind ? 0.85 : 1);
+    // motion trail
+    if (!f.landed && !f.fading) {
+      ctx.save();
+      for (let i = 0; i < f.trail.length - 1; i++) {
+        const p = f.trail[i];
+        const t = i / f.trail.length;
+        ctx.globalAlpha = t * 0.18 * f.alpha;
+        ctx.fillStyle = f.color;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, L.cardW * 0.28 * scale * t, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.restore();
+    }
+    const lift = f.landed ? 0.1 : 1;
+    drawFile(f, f.x, f.y, scale, f.rot, f.flip, Math.max(0, f.alpha), lift);
+  }
+
+  function drawWaiting(f) {
+    let scale = 1, x = f.x, y = f.y, lift = 0.15, rot = f.rot;
+    if (f.state === "spawning") scale = Math.max(0.01, easeOutBack(f.t));
+    if (f.state === "idle") y = f.oy - Math.abs(Math.sin(time * 2.6 + f.ox * 0.01)) * 4 * u;
+    if (f.state === "dragging") { scale = 1.06; lift = 1; }
+
+    let timer;
+    if (f.deadline !== undefined) {
+      timer = clamp((f.deadline - time) / DEADLINE, 0, 1);
+      if (timer < 0.3 && !reduceMotion) { // jitter when it's about to expire
+        x += Math.sin(time * 50 + f.ox) * 1.6 * u;
+        rot += Math.sin(time * 37 + f.ox) * 0.03;
+      }
+    }
+
+    // invite ring for brand new players
+    if (f.state === "idle" && shots < 3 && level === 1) {
+      const t = (time * 0.9) % 1;
+      ctx.save();
+      ctx.globalAlpha = (1 - t) * 0.5;
+      ctx.strokeStyle = C.accent;
+      ctx.lineWidth = 2 * u;
+      ctx.beginPath();
+      ctx.arc(f.x, f.oy, L.cardH * (0.55 + t * 0.5), 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    drawFile(f, x, y, scale, rot, 0, 1, lift, timer);
+
+    // file name under the card (only when it's alone, so labels never collide)
+    if (f.state !== "dragging" && waiting.length === 1) {
+      ctx.save();
+      ctx.globalAlpha = f.state === "spawning" ? f.t : 1;
+      ctx.fillStyle = C.muted;
+      ctx.font = `500 ${Math.max(11, 13 * u)}px Inter, system-ui, sans-serif`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "top";
+      let label = `${f.name}.${f.ext.toLowerCase()}`;
+      if (label.length > 24) label = label.slice(0, 21) + "…";
+      ctx.fillText(label, f.x, L.floorY + 8 * u);
+      ctx.restore();
+    }
+  }
+
+  function drawPoof(p) {
+    const t = p.t / 0.5;
+    drawFile(p.f, p.x, p.y - t * 10 * u, 1 - t * 0.6, p.rot + t * 0.4, 0, 1 - t, 0.1, p.quiet ? undefined : 0);
+  }
+
+  function drawEffects() {
+    for (const r of rings) {
+      const t = r.t / r.life;
+      ctx.save();
+      ctx.globalAlpha = (1 - t) * (r.glass ? 0.5 : 0.7);
+      ctx.strokeStyle = r.glass ? "#ffffff" : C.orange;
+      ctx.lineWidth = (r.glass ? 2 : 3) * u * (1 - t) + 0.5;
+      ctx.beginPath();
+      if (r.glass) ctx.arc(r.x, r.y, 10 * u + t * 40 * u, 0, Math.PI * 2);
+      else ctx.ellipse(r.x, r.y, L.rx + t * 70 * u, L.ry + t * 20 * u, 0, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    for (const p of particles) {
+      const t = p.t / p.life;
+      ctx.save();
+      ctx.globalAlpha = 1 - t * t;
+      ctx.fillStyle = p.color;
+      if (p.kind === "confetti") {
+        ctx.translate(p.x, p.y);
+        ctx.rotate(p.rot);
+        ctx.scale(1, Math.cos(p.rot * 1.7)); // flutter
+        ctx.fillRect(-p.w / 2, -p.h / 2, p.w, p.h);
+      } else {
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.r * (1 - t), 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.restore();
+    }
+
+    for (const tx of texts) {
+      const t = tx.t / tx.life;
+      const pop = t < 0.15 ? easeOutBack(t / 0.15) : 1;
+      ctx.save();
+      ctx.globalAlpha = t > 0.7 ? 1 - (t - 0.7) / 0.3 : 1;
+      ctx.translate(tx.x, tx.y - t * 34 * u);
+      ctx.scale(pop, pop);
+      ctx.font = `${tx.weight} ${tx.size}px Inter, system-ui, sans-serif`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.shadowColor = C.dark ? "rgba(0,0,0,0.6)" : "rgba(255,255,255,0.9)";
+      ctx.shadowBlur = 10;
+      ctx.fillStyle = tx.color;
+      ctx.fillText(tx.text, 0, 0);
+      ctx.restore();
+    }
+  }
+
+  function drawHint() {
+    if (hintAlpha <= 0 || over) return;
+    ctx.save();
+    ctx.globalAlpha = hintAlpha * (0.65 + 0.35 * Math.sin(time * 3));
+    ctx.fillStyle = C.muted;
+    ctx.font = `500 ${Math.max(12, 14 * u)}px Inter, system-ui, sans-serif`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText("Drag a file toward the hoop, then let go", L.cx, L.rimY + L.netH + 62 * u);
+    ctx.restore();
+  }
+
+  function render() {
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    drawBackground();
+
+    ctx.save();
+    if (camShake > 0) ctx.translate(rand(-1, 1) * camShake, rand(-1, 1) * camShake);
+
+    drawDropZone();
+
+    for (const f of flying) if (!f.behind) drawFloorShadow(f.x, f.y, 1 - 0.3 * f.depth, f.alpha);
+    for (const f of waiting) drawFloorShadow(f.x, f.state === "dragging" ? f.y : L.floorY - L.cardH / 2, 1, 1);
+
+    const layers = [[], [], []];
+    for (const f of flying) layers[fileLayer(f)].push(f);
+
+    layers[0].forEach(drawFlying);           // flew over the board: hidden behind it
+    drawBoard();
+    drawBracket();
+    strokeRim(Math.PI, Math.PI * 2, false);  // far half of the rim
+    drawNet(false);
+    layers[1].forEach(drawFlying);           // dropping through the hoop
+    drawNet(true);
+    strokeRim(0, Math.PI, true);             // near half of the rim
+    drawHint();
+    drawTrajectory();
+    layers[2].forEach(drawFlying);
+    poofs.forEach(drawPoof);
+    for (const f of waiting) if (f !== held) drawWaiting(f);
+    if (held) drawWaiting(held);             // the dragged file always on top
+    drawEffects();
+
+    ctx.restore();
+  }
+
+  // ---------- Input ----------
+  function pointerPos(e) {
+    const r = canvas.getBoundingClientRect();
+    return { x: e.clientX - r.left, y: e.clientY - r.top };
+  }
+
+  function fileAt(p) {
+    if (over || held) return null;
+    const radius = Math.max(L.cardH * 0.85, 56);
+    let bestF = null, bestD = radius;
+    for (const f of waiting) {
+      const d = Math.hypot(p.x - f.x, p.y - f.y);
+      if (d < bestD) { bestD = d; bestF = f; }
+    }
+    return bestF;
+  }
+
+  canvas.addEventListener("pointerdown", (e) => {
+    sfx.unlock();
+    const p = pointerPos(e);
+    const f = fileAt(p);
+    if (!f) return;
+    e.preventDefault();
+    if (f.state === "spawning") f.t = 1;
+    f.state = "dragging";
+    held = f;
+    drag = { id: e.pointerId, sx: p.x, sy: p.y, px: p.x, py: p.y };
+    try { canvas.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ }
+    canvas.style.cursor = "grabbing";
+  });
+
+  canvas.addEventListener("pointermove", (e) => {
+    const p = pointerPos(e);
+    if (drag && e.pointerId === drag.id) {
+      drag.px = p.x;
+      drag.py = p.y;
+    } else {
+      canvas.style.cursor = fileAt(p) ? "grab" : "default";
+    }
+  });
+
+  function endDrag(e, cancelled) {
+    if (!drag || e.pointerId !== drag.id) return;
+    if (held) {
+      if (cancelled) { held.state = "returning"; held = null; }
+      else launch();
+    }
+    drag = null;
+    canvas.style.cursor = "default";
+  }
+  canvas.addEventListener("pointerup", (e) => endDrag(e, false));
+  canvas.addEventListener("pointercancel", (e) => endDrag(e, true));
+
+  // Real files: drop them anywhere on the page (or use the "Your files" button)
+  function loadRealFiles(list) {
+    const files = Array.from(list || []);
+    if (!files.length || over) return;
+    files.slice(0, 50).forEach((f) => queue.push(makeRealFile(f)));
+    // swap the waiting fake files for real ones straight away
+    for (const f of waiting) {
+      if (f === held || f.real || !queue.length) continue;
+      Object.assign(f, queue.shift(), { state: "spawning", t: 0 });
+    }
+    sfx.pop();
+    floatText(files.length === 1 ? "File loaded. Take the shot!" : `${files.length} files loaded. Take the shots!`,
+      L.cx, L.rimY + L.netH + 34 * u, { size: 16 * u, color: C.accent, weight: 700, life: 1.8 });
+  }
+
+  window.addEventListener("dragover", (e) => {
+    e.preventDefault();
+    osDrag = true;
+    clearTimeout(osDragTimer);
+    osDragTimer = setTimeout(() => { osDrag = false; }, 200);
+  });
+  window.addEventListener("drop", (e) => {
+    e.preventDefault();
+    osDrag = false;
+    loadRealFiles(e.dataTransfer && e.dataTransfer.files);
+  });
+  picker.addEventListener("change", () => {
+    sfx.unlock();
+    loadRealFiles(picker.files);
+    picker.value = "";
+  });
+
+  // ---------- Install as an app ----------
+  // Works when the page is served over http(s), e.g. GitHub Pages. Opening the file directly skips this.
+  const installBtn = $("install");
+  let installPrompt = null;
+  if ("serviceWorker" in navigator && /^https?:$/.test(location.protocol)) {
+    window.addEventListener("load", () => {
+      navigator.serviceWorker.register("sw.js").catch(() => { /* offline support is optional */ });
+    });
+  }
+  window.addEventListener("beforeinstallprompt", (e) => {
+    e.preventDefault(); // show our own Install button instead of the browser's mini bar
+    installPrompt = e;
+    installBtn.hidden = false;
+  });
+  installBtn.addEventListener("click", async () => {
+    if (!installPrompt) return;
+    installPrompt.prompt();
+    try { await installPrompt.userChoice; } catch (e) { /* ignore */ }
+    installPrompt = null;
+    installBtn.hidden = true;
+  });
+  window.addEventListener("appinstalled", () => { installBtn.hidden = true; });
+
+  // ---------- Boot ----------
+  let resizeRaf = 0;
+  window.addEventListener("resize", () => {
+    cancelAnimationFrame(resizeRaf);
+    resizeRaf = requestAnimationFrame(() => { layout(); repositionWaiting(); });
+  });
+
+  layout();
+  updateHud();
+
+  // a tiny hook for automated checks
+  window.__fileShot = {
+    get uploaded() { return uploaded; }, get missed() { return missed; }, get level() { return level; },
+    get over() { return over; }, get L() { return L; }, waiting, flying,
+    setLevel: (n) => setLevel(n),
+  };
+
+  const STEP = 1 / 120;
+  let last = performance.now(), acc = 0, hudT = 0;
+  function frame(now) {
+    acc += Math.min(0.05, (now - last) / 1000);
+    last = now;
+    while (acc >= STEP) { update(STEP); acc -= STEP; }
+    render();
+    hudT += 1;
+    if (hudT % 10 === 0) updateLevelBar();
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+})();

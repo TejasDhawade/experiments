@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>File Shot — Upload Hoops</title>
+  <meta name="description" content="A tiny game: drag a file, aim at the hoop, and upload it with a swish.">
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+
+  <link rel="stylesheet" href="game.css">
+
+  <!-- Installable app -->
+  <link rel="manifest" href="manifest.webmanifest">
+  <meta name="theme-color" content="#eceff4" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#111317" media="(prefers-color-scheme: dark)">
+  <link rel="icon" href="icons/favicon-32.png" sizes="32x32" type="image/png">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="File Shot">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+</head>
+<body>
+
+  <!-- The whole scene (drop zone, hoop, files, effects) is drawn here -->
+  <canvas id="scene" aria-label="Basketball upload game. Drag the file toward the hoop and release to shoot."></canvas>
+
+  <!-- ========== HUD ========== -->
+  <header class="hud">
+    <div class="hud-left">
+      <a class="back" href="index.html">&larr; Portfolio</a>
+      <h1>Upload files</h1>
+      <p>Drag, aim, and take the shot.</p>
+    </div>
+
+    <div class="hud-right">
+      <div class="pill" id="scorePill" aria-live="polite">
+        <div class="stat up"><b id="uploaded">0</b><span>Uploaded</span></div>
+        <div class="stat miss"><b id="missed">0</b><span>Missed</span></div>
+        <div class="stat rate"><b id="rate">–</b><span>Success</span></div>
+      </div>
+      <div class="level">
+        <span id="levelName">Level 1 · Warm-up</span>
+        <span class="lvbar" id="levelBar"><i id="levelFill"></i></span>
+        <span class="pips" id="pips" title="Misses in a row. A 6th miss ends the game." hidden><i></i><i></i><i></i><i></i><i></i></span>
+      </div>
+      <div class="actions">
+        <button class="btn" id="install" type="button" title="Install File Shot as an app" hidden>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11m0 0-4.5-4.5M12 15l4.5-4.5M4 17v1a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-1"/></svg>
+          <span>Install</span>
+        </button>
+        <label class="btn" title="Shoot your own files">
+          <input type="file" id="picker" multiple hidden>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4m0 0-4.5 4.5M12 4l4.5 4.5M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/></svg>
+          <span>Your files</span>
+        </label>
+        <button class="btn icon" id="mute" type="button" aria-label="Mute sound" title="Sound">
+          <svg class="on" viewBox="0 0 24 24" aria-hidden="true"><path d="M11 5 6 9H3v6h3l5 4V5Z"/><path d="M15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13"/></svg>
+          <svg class="off" viewBox="0 0 24 24" aria-hidden="true"><path d="M11 5 6 9H3v6h3l5 4V5Z"/><path d="m16 9 6 6m0-6-6 6"/></svg>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- Upload "progress" toasts appear here after each basket -->
+  <ul class="tray" id="tray" aria-live="polite"></ul>
+
+  <!-- Level-up announcement -->
+  <div class="banner" id="banner" role="status" hidden>
+    <span class="kicker"></span>
+    <strong class="title"></strong>
+    <span class="sub"></span>
+  </div>
+
+  <!-- Final score -->
+  <div class="over" id="over" hidden>
+    <div class="over-card" role="dialog" aria-modal="true" aria-labelledby="overTitle">
+      <p class="over-kicker">Upload interrupted</p>
+      <h2 id="overTitle"><span id="finalUploaded">0</span><small>files uploaded</small></h2>
+      <p class="best" id="finalBest">Best: 0</p>
+      <dl class="final-stats">
+        <div><dt>Missed</dt><dd id="finalMissed">0</dd></div>
+        <div><dt>Success</dt><dd id="finalRate">–</dd></div>
+        <div><dt>Best streak</dt><dd id="finalStreak">0</dd></div>
+        <div><dt>Time</dt><dd id="finalTime">0s</dd></div>
+      </dl>
+      <div class="over-actions">
+        <button class="cta" id="restart" type="button">Play again</button>
+        <button class="cta ghost" id="share" type="button">Share score</button>
+      </div>
+      <div class="share-row">
+        <a id="shareX" href="#" target="_blank" rel="noopener">Post on X</a>
+        <a id="shareWa" href="#" target="_blank" rel="noopener">Send on WhatsApp</a>
+      </div>
+      <p class="share-note" id="shareNote" aria-live="polite"></p>
+      <div class="share-fallback" id="shareFallback" hidden>
+        <input id="shareText" type="text" readonly aria-label="Score to share">
+      </div>
+    </div>
+  </div>
+
+  <script src="game.js"></script>
+</body>
+</html>
