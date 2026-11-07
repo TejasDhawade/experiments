@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>File Shot — Upload Hoops</title>
+  <meta name="description" content="A tiny game: drag a file, aim at the hoop, and upload it with a swish.">
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+
+  <link rel="stylesheet" href="game.css">
+</head>
+<body>
+
+  <!-- The whole scene (drop zone, hoop, files, effects) is drawn here -->
+  <canvas id="scene" aria-label="Basketball upload game. Drag the file toward the hoop and release to shoot."></canvas>
+
+  <!-- ========== HUD ========== -->
+  <header class="hud">
+    <div class="hud-left">
+      <a class="back" href="index.html">&larr; Portfolio</a>
+      <h1>Upload files</h1>
+      <p>Drag, aim, and take the shot.</p>
+    </div>
+
+    <div class="hud-right">
+      <div class="pill" id="scorePill" aria-live="polite">
+        <span>Uploaded</span>
+        <b id="score">0</b>
+      </div>
+      <div class="meta">
+        <span>Streak <b id="streak">0</b></span>
+        <span class="dot">·</span>
+        <span>Best <b id="best">0</b></span>
+      </div>
+      <div class="actions">
+        <label class="btn" title="Shoot your own files">
+          <input type="file" id="picker" multiple hidden>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4m0 0-4.5 4.5M12 4l4.5 4.5M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/></svg>
+          <span>Your files</span>
+        </label>
+        <button class="btn icon" id="mute" type="button" aria-label="Mute sound" title="Sound">
+          <svg class="on" viewBox="0 0 24 24" aria-hidden="true"><path d="M11 5 6 9H3v6h3l5 4V5Z"/><path d="M15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13"/></svg>
+          <svg class="off" viewBox="0 0 24 24" aria-hidden="true"><path d="M11 5 6 9H3v6h3l5 4V5Z"/><path d="m16 9 6 6m0-6-6 6"/></svg>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- Upload "progress" toasts appear here after each basket -->
+  <ul class="tray" id="tray" aria-live="polite"></ul>
+
+  <script src="game.js"></script>
+</body>
+</html>
