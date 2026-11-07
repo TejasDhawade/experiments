@@ -27,13 +27,14 @@
 
     <div class="hud-right">
       <div class="pill" id="scorePill" aria-live="polite">
-        <span>Uploaded</span>
-        <b id="score">0</b>
+        <div class="stat up"><b id="uploaded">0</b><span>Uploaded</span></div>
+        <div class="stat miss"><b id="missed">0</b><span>Missed</span></div>
+        <div class="stat rate"><b id="rate">–</b><span>Success</span></div>
       </div>
-      <div class="meta">
-        <span>Streak <b id="streak">0</b></span>
-        <span class="dot">·</span>
-        <span>Best <b id="best">0</b></span>
+      <div class="level">
+        <span id="levelName">Level 1 · Warm-up</span>
+        <span class="lvbar" id="levelBar"><i id="levelFill"></i></span>
+        <span class="pips" id="pips" title="Misses in a row. A 6th miss ends the game." hidden><i></i><i></i><i></i><i></i><i></i></span>
       </div>
       <div class="actions">
         <label class="btn" title="Shoot your own files">
@@ -51,6 +52,40 @@
 
   <!-- Upload "progress" toasts appear here after each basket -->
   <ul class="tray" id="tray" aria-live="polite"></ul>
+
+  <!-- Level-up announcement -->
+  <div class="banner" id="banner" role="status" hidden>
+    <span class="kicker"></span>
+    <strong class="title"></strong>
+    <span class="sub"></span>
+  </div>
+
+  <!-- Final score -->
+  <div class="over" id="over" hidden>
+    <div class="over-card" role="dialog" aria-modal="true" aria-labelledby="overTitle">
+      <p class="over-kicker">Upload interrupted</p>
+      <h2 id="overTitle"><span id="finalUploaded">0</span><small>files uploaded</small></h2>
+      <p class="best" id="finalBest">Best: 0</p>
+      <dl class="final-stats">
+        <div><dt>Missed</dt><dd id="finalMissed">0</dd></div>
+        <div><dt>Success</dt><dd id="finalRate">–</dd></div>
+        <div><dt>Best streak</dt><dd id="finalStreak">0</dd></div>
+        <div><dt>Time</dt><dd id="finalTime">0s</dd></div>
+      </dl>
+      <div class="over-actions">
+        <button class="cta" id="restart" type="button">Play again</button>
+        <button class="cta ghost" id="share" type="button">Share score</button>
+      </div>
+      <div class="share-row">
+        <a id="shareX" href="#" target="_blank" rel="noopener">Post on X</a>
+        <a id="shareWa" href="#" target="_blank" rel="noopener">Send on WhatsApp</a>
+      </div>
+      <p class="share-note" id="shareNote" aria-live="polite"></p>
+      <div class="share-fallback" id="shareFallback" hidden>
+        <input id="shareText" type="text" readonly aria-label="Score to share">
+      </div>
+    </div>
+  </div>
 
   <script src="game.js"></script>
 </body>

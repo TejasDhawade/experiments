@@ -2,10 +2,17 @@
    File Shot — drag a file, aim at the hoop, upload with a swish.
 
    How it plays:
-   - Grab the file card and drag it toward where you want it to go.
+   - Grab a file card and drag it toward where you want it to go.
      The further you drag, the harder you throw (dotted line = aim).
    - Let go and the file flies in that direction.
-   - Through the rim = +1 upload.
+   - Through the rim = uploaded. Anything else = missed.
+
+   Difficulty curve:
+   - Level 1 "Warm-up": one file at a time.
+   - Level 2 "Rush hour": several files at once (after 3 uploads or 35 s).
+   - Level 3 "Deadline": after 8 uploads in level 2. Every file has
+     8 seconds (shown as a ring around the card) and more files keep
+     coming. Miss more than 5 in a row and the game ends.
 
    Everything is drawn on one <canvas>. The scene fakes depth:
    the file shrinks as it travels "into" the screen, passes in front
@@ -14,16 +21,33 @@
 (() => {
   "use strict";
 
+  // ---------- Tuning ----------
+  const LEVELS = {
+    1: { name: "Warm-up", uploadsToPass: 3, secondsToPass: 35 },
+    2: { name: "Rush hour", uploadsToPass: 8 },
+    3: { name: "Deadline" },
+  };
+  const DEADLINE = 8;          // seconds per file in level 3
+  const MAX_MISS_RUN = 5;      // the 6th miss in a row ends the game
+  const BANNER_TIME = 2.6;
+
   // ---------- DOM ----------
-  const canvas = document.getElementById("scene");
+  const $ = (id) => document.getElementById(id);
+  const canvas = $("scene");
   const ctx = canvas.getContext("2d");
-  const scoreEl = document.getElementById("score");
-  const pillEl = document.getElementById("scorePill");
-  const streakEl = document.getElementById("streak");
-  const bestEl = document.getElementById("best");
-  const trayEl = document.getElementById("tray");
-  const muteBtn = document.getElementById("mute");
-  const picker = document.getElementById("picker");
+  const scorePill = $("scorePill");
+  const uploadedEl = $("uploaded");
+  const missedEl = $("missed");
+  const rateEl = $("rate");
+  const levelNameEl = $("levelName");
+  const levelFillEl = $("levelFill");
+  const levelBarEl = $("levelBar");
+  const pipsEl = $("pips");
+  const trayEl = $("tray");
+  const muteBtn = $("mute");
+  const picker = $("picker");
+  const bannerEl = $("banner");
+  const overEl = $("over");
 
   const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
   const darkQuery = matchMedia("(prefers-color-scheme: dark)");
@@ -52,12 +76,39 @@
     ctx.closePath();
   }
 
+  // rounded rect that starts at the top centre, so a dashed stroke reads like a countdown ring
+  function rrFromTop(x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + w / 2, y);
+    ctx.lineTo(x + w - r, y);
+    ctx.arcTo(x + w, y, x + w, y + r, r);
+    ctx.lineTo(x + w, y + h - r);
+    ctx.arcTo(x + w, y + h, x + w - r, y + h, r);
+    ctx.lineTo(x + r, y + h);
+    ctx.arcTo(x, y + h, x, y + h - r, r);
+    ctx.lineTo(x, y + r);
+    ctx.arcTo(x, y, x + r, y, r);
+    ctx.closePath();
+    return 2 * (w + h) - 8 * r + 2 * Math.PI * r;
+  }
+
+  function mixColor(a, b, t) {
+    const pa = a.match(/\w\w/g).map((h) => parseInt(h, 16));
+    const pb = b.match(/\w\w/g).map((h) => parseInt(h, 16));
+    return `rgb(${pa.map((v, i) => Math.round(lerp(v, pb[i], t))).join(",")})`;
+  }
+  function timerColor(frac) {
+    if (frac > 0.5) return mixColor("f5a524", "22c55e", (frac - 0.5) / 0.5);
+    return mixColor("ef4444", "f5a524", frac / 0.5);
+  }
+
   // ---------- Colours (read from CSS tokens so dark mode just works) ----------
   let C = {};
   function readColors() {
     const cs = getComputedStyle(document.documentElement);
     const g = (n) => cs.getPropertyValue(n).trim();
-    const dark = darkQuery.matches;
+    const t = document.documentElement.getAttribute("data-theme");
+    const dark = t ? t === "dark" : darkQuery.matches;
     C = {
       dark,
       bg: g("--bg"), bg2: g("--bg2"), surface: g("--surface"), text: g("--text"),
@@ -75,6 +126,7 @@
   }
   readColors();
   darkQuery.addEventListener?.("change", readColors);
+  new MutationObserver(readColors).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
 
   // ---------- File types ----------
   const TYPE_COLORS = {
@@ -180,8 +232,12 @@
       },
       thud() { tone(160, 60, 0.22, "sine", 0.4); noise(0.1, "lowpass", 900, 300, 0.7, 0.18); },
       ding() { tone(1318.5, 1318.5, 0.4, "sine", 0.1, 0.08); tone(1975.5, 1975.5, 0.6, "sine", 0.09, 0.2); },
-      pop() { tone(500, 900, 0.09, "sine", 0.05); },
+      pop() { tone(500, 900, 0.09, "sine", 0.04); },
       thump() { tone(110, 70, 0.12, "sine", 0.15); },
+      tick() { tone(1800, 1700, 0.04, "square", 0.025); },
+      expire() { tone(420, 180, 0.28, "sawtooth", 0.06); noise(0.2, "lowpass", 1200, 200, 0.8, 0.08); },
+      levelUp() { [523.25, 659.25, 783.99, 1046.5].forEach((f, i) => tone(f, f, 0.25, "triangle", 0.09, i * 0.09)); },
+      gameOver() { [392, 329.63, 261.63].forEach((f, i) => tone(f, f * 0.98, 0.4, "triangle", 0.1, i * 0.16)); },
     };
   })();
 
@@ -206,7 +262,7 @@
 
     u = clamp(Math.min(W * 1.25, H * 0.8) / 720, 0.55, 1.2);
 
-    const headerH = W < 640 ? 148 : 132;
+    const headerH = W < 640 ? 150 : 140;
     L.cx = W / 2;
 
     // hoop
@@ -237,23 +293,29 @@
     L.floorY = H - Math.max(48 * u, 40);
     L.g = 1750 * u;
     L.maxPull = clamp(150 * u, 95, 175);
+    L.margin = 20 + L.cardW * 0.8;
+    L.capacity = clamp(Math.floor((W - 2 * L.margin) / (L.cardW * 1.75)) + 1, 2, 5);
 
+    bannerEl.style.top = `${L.rimY + L.netH + 16 * u}px`;
     buildNet();
   }
 
   // ---------- Game state ----------
-  let score = 0, streak = 0;
+  let uploaded = 0, missed = 0, streak = 0, bestStreak = 0, missRun = 0;
   let best = parseInt(store.get("fileshot-best", "0"), 10) || 0;
-  bestEl.textContent = best;
+  let level = 1, levelUploads = 0, levelStart = 0, gameStart = 0;
+  let over = false;
 
-  let cur = null;           // the file waiting to be thrown
-  const flying = [];        // files in the air / on the floor
+  const waiting = [];       // files sitting on the floor, ready to throw
+  let held = null;          // the file being dragged
+  const flying = [];        // files in the air / on the floor after a throw
+  const poofs = [];         // files that ran out of time
   const particles = [];
   const texts = [];
   const rings = [];
   const queue = [];         // real files the player dropped in
   let drag = null;
-  let nextSpawnAt = 0;
+  let nextSpawnAt = 0.2;
   let firstSpawn = true;
   let shots = 0;
   let hintAlpha = 1;
@@ -261,7 +323,15 @@
   let boardShake = 0;
   let camShake = 0;
   let osDrag = false, osDragTimer = 0;
+  let bannerTimer = 0;
   let time = 0;
+
+  function levelParams() {
+    if (level === 1) return { target: 1, interval: 0.6 };
+    if (level === 2) return { target: Math.min(L.capacity, levelUploads < 4 ? 2 : 3), interval: 1.3 };
+    const wave = Math.floor(levelUploads / 5);
+    return { target: Math.min(L.capacity, 2 + wave), interval: Math.max(0.8, 2.0 - wave * 0.25) };
+  }
 
   // ---------- Net (spring mesh hanging from the rim) ----------
   const NET_N = 16, NET_R = 6;
@@ -327,30 +397,41 @@
   }
 
   // ---------- Spawning ----------
+  function pickSpawnX() {
+    if (firstSpawn) {
+      firstSpawn = false;
+      return L.cx - Math.min(W * 0.3, 290 * u);
+    }
+    // pick the spot furthest from the files already waiting
+    const lo = L.margin, hi = W - L.margin;
+    let bestX = rand(lo, hi), bestScore = -Infinity;
+    for (let k = 0; k < 30; k++) {
+      const x = rand(lo, hi);
+      let d = Infinity;
+      for (const f of waiting) d = Math.min(d, Math.abs(f.ox - x));
+      const centrePenalty = Math.abs(x - L.cx) < W * 0.08 ? 40 : 0;
+      const score = Math.min(d, W) - centrePenalty + rand(0, 20);
+      if (score > bestScore) { bestScore = score; bestX = x; }
+    }
+    return bestX;
+  }
+
   function spawn() {
     const info = queue.length ? queue.shift() : makeFakeFile();
+    const x = clamp(pickSpawnX(), L.margin, W - L.margin);
     const y = L.floorY - L.cardH / 2;
-    let x;
-    if (firstSpawn) {
-      x = L.cx - Math.min(W * 0.3, 290 * u);
-      firstSpawn = false;
-    } else {
-      const span = Math.min(W * 0.36, 360 * u);
-      for (let k = 0; k < 10; k++) {
-        x = L.cx + rand(-span, span);
-        if (Math.abs(x - L.cx) > span * 0.25) break;
-      }
-    }
-    x = clamp(x, 24 + L.cardW, W - 24 - L.cardW);
-    cur = { ...info, ox: x, oy: y, x, y, rot: 0, state: "spawning", t: 0 };
+    const f = { ...info, ox: x, oy: y, x, y, rot: 0, state: "spawning", t: 0, born: time };
+    if (level === 3) f.deadline = time + 0.45 + DEADLINE;
+    waiting.push(f);
     sfx.pop();
   }
 
-  function respawnPosition() {
-    if (!cur) return;
-    cur.oy = L.floorY - L.cardH / 2;
-    cur.ox = clamp(cur.ox, 24 + L.cardW, W - 24 - L.cardW);
-    cur.x = cur.ox; cur.y = cur.oy;
+  function repositionWaiting() {
+    for (const f of waiting) {
+      f.oy = L.floorY - L.cardH / 2;
+      f.ox = clamp(f.ox, L.margin, W - L.margin);
+      if (f !== held) { f.x = f.ox; f.y = f.oy; }
+    }
   }
 
   // ---------- Throwing ----------
@@ -365,28 +446,28 @@
     return { nx, ny, power, ox: nx * Math.min(shown, L.maxPull * 1.15), oy: ny * Math.min(shown, L.maxPull * 1.15) };
   }
 
-  function vmax() {
+  function launchVelocity(f, info) {
     // calibrated so ~70% power is a comfortable shot on any screen
-    const rise = Math.max((L.oyRef || L.floorY) - L.by, 120 * u);
-    return Math.sqrt(2 * L.g * rise) * 1.02;
-  }
-
-  function launchVelocity(info) {
-    const v = vmax() * (0.18 + 0.82 * info.power);
+    const rise = Math.max(f.oy - L.by, 120 * u);
+    const vmax = Math.sqrt(2 * L.g * rise) * 1.02;
+    const v = vmax * (0.18 + 0.82 * info.power);
     return { vx: info.nx * v, vy: info.ny * v };
   }
 
   function launch() {
+    const f = held;
     const info = dragInfo();
+    held = null;
     if (info.power < 0.12) {
-      cur.state = "returning";
+      f.state = "returning";
       return;
     }
-    const v = launchVelocity(info);
+    const v = launchVelocity(f, info);
+    waiting.splice(waiting.indexOf(f), 1);
     flying.push({
-      ...cur,
+      ...f,
       vx: v.vx, vy: v.vy,
-      y0: cur.y,
+      y0: f.y,
       spin: v.vx * 0.004 / u + rand(-1.5, 1.5),
       flip: 0,
       flipV: rand(3, 6) * (Math.random() < 0.5 ? -1 : 1),
@@ -395,10 +476,20 @@
       rimHits: 0, landed: false, restT: 0, age: 0, alpha: 1, fading: false,
       trail: [],
     });
-    cur = null;
     shots++;
-    nextSpawnAt = time + 0.6;
+    nextSpawnAt = Math.max(nextSpawnAt, time + 0.45);
     sfx.whoosh(info.power);
+  }
+
+  function expire(f) {
+    const i = waiting.indexOf(f);
+    if (i >= 0) waiting.splice(i, 1);
+    if (held === f) { held = null; drag = null; canvas.style.cursor = "default"; }
+    poofs.push({ f, x: f.x, y: f.y, rot: f.rot, t: 0 });
+    sparks(f.x, f.y, 14, "#ef4444");
+    sfx.expire();
+    nextSpawnAt = Math.max(nextSpawnAt, time + 0.5);
+    registerMiss("Expired", f.x, f.y - L.cardH * 0.9);
   }
 
   // ---------- Effects ----------
@@ -433,18 +524,85 @@
     if (!reduceMotion) camShake = Math.max(camShake, amount);
   }
 
+  function showBanner(kicker, title, sub) {
+    bannerEl.querySelector(".kicker").textContent = kicker;
+    bannerEl.querySelector(".title").textContent = title;
+    bannerEl.querySelector(".sub").textContent = sub;
+    bannerEl.hidden = false;
+    bannerEl.classList.remove("show");
+    void bannerEl.offsetWidth;
+    bannerEl.classList.add("show");
+    clearTimeout(bannerTimer);
+    bannerTimer = setTimeout(() => { bannerEl.hidden = true; }, BANNER_TIME * 1000);
+  }
+
+  // ---------- HUD ----------
+  function bump(el) {
+    el.classList.remove("bump");
+    void el.offsetWidth; // restart the CSS animation
+    el.classList.add("bump");
+  }
+
+  function successRate() {
+    const total = uploaded + missed;
+    return total ? Math.round((uploaded / total) * 100) : null;
+  }
+
+  function updateHud() {
+    uploadedEl.textContent = uploaded;
+    missedEl.textContent = missed;
+    const r = successRate();
+    rateEl.textContent = r === null ? "–" : r + "%";
+    levelNameEl.textContent = `Level ${level} · ${LEVELS[level].name}`;
+    const deadline = level === 3;
+    levelBarEl.hidden = deadline;
+    pipsEl.hidden = !deadline;
+    if (deadline) {
+      pipsEl.querySelectorAll("i").forEach((p, i) => p.classList.toggle("on", i < missRun));
+      pipsEl.classList.toggle("danger", missRun >= MAX_MISS_RUN);
+    }
+  }
+
+  function updateLevelBar() {
+    if (level === 1) {
+      const cfg = LEVELS[1];
+      const p = Math.max(levelUploads / cfg.uploadsToPass, (time - levelStart) / cfg.secondsToPass);
+      levelFillEl.style.width = `${clamp(p, 0, 1) * 100}%`;
+    } else if (level === 2) {
+      levelFillEl.style.width = `${clamp(levelUploads / LEVELS[2].uploadsToPass, 0, 1) * 100}%`;
+    }
+  }
+
+  // ---------- Levels ----------
+  function setLevel(n) {
+    level = n;
+    levelUploads = 0;
+    levelStart = time;
+    missRun = 0;
+    if (n === 2) {
+      showBanner("Level 2", "Rush hour", "More files are piling up. Upload as many as you can.");
+      nextSpawnAt = time + 1.0;
+    } else if (n === 3) {
+      showBanner("Level 3", "Deadline", "Each file has 8 seconds. Miss 6 in a row and it's game over.");
+      for (const f of waiting) f.deadline = time + BANNER_TIME + DEADLINE;
+      nextSpawnAt = time + BANNER_TIME;
+    }
+    sfx.levelUp();
+    confetti(L.cx, L.rimY + L.netH, 30);
+    updateHud();
+  }
+
   // ---------- Scoring ----------
   function onScore(f) {
     f.scored = true;
-    score++;
+    if (over) return;
+    uploaded++;
+    levelUploads++;
     streak++;
-    if (score > best) { best = score; store.set("fileshot-best", String(best)); }
-    scoreEl.textContent = score;
-    streakEl.textContent = streak;
-    bestEl.textContent = best;
-    pillEl.classList.remove("bump");
-    void pillEl.offsetWidth; // restart the CSS animation
-    pillEl.classList.add("bump");
+    bestStreak = Math.max(bestStreak, streak);
+    missRun = 0;
+    updateHud();
+    bump(scorePill.querySelector(".stat.up"));
 
     const clean = f.rimHits === 0 && !f.banked;
     const label = f.banked ? "Bank shot!" : clean ? "Swish!" : pick(["Nice!", "Rattled in!", "Got it!"]);
@@ -459,17 +617,31 @@
     sfx.swish();
     sfx.ding();
     addToast(f);
+
+    if (level === 2 && levelUploads >= LEVELS[2].uploadsToPass) setLevel(3);
   }
 
   function onMiss(f) {
-    streak = 0;
-    streakEl.textContent = 0;
     let msg = "Missed";
     if (f.behind) msg = "Over the board";
     else if (!f.aboveRim) msg = "Airball";
     else if (f.rimHits > 0) msg = "Rim out";
     else if (f.banked) msg = "Off the glass";
-    floatText(msg, L.cx, L.rimY + L.netH + 34 * u, { size: 16 * u, color: C.muted, weight: 600, life: 1.1 });
+    registerMiss(msg, L.cx, L.rimY + L.netH + 34 * u);
+  }
+
+  function registerMiss(msg, x, y) {
+    if (over) return;
+    missed++;
+    streak = 0;
+    floatText(msg, x, y, { size: 16 * u, color: msg === "Expired" ? "#ef4444" : C.muted, weight: 700, life: 1.1 });
+    if (level === 3) {
+      missRun++;
+      if (missRun > MAX_MISS_RUN) { updateHud(); gameOver(); return; }
+      if (missRun === MAX_MISS_RUN) floatText("Last chance!", L.cx, L.rimY + L.netH + 60 * u, { size: 20 * u, color: "#ef4444", weight: 800, life: 1.6 });
+    }
+    updateHud();
+    bump(scorePill.querySelector(".stat.miss"));
   }
 
   function addToast(f) {
@@ -503,6 +675,92 @@
     setTimeout(() => { li.classList.add("done"); sub.textContent = `${f.size} · uploaded`; }, 950);
     setTimeout(() => { li.classList.add("out"); setTimeout(() => li.remove(), 400); }, 4200);
   }
+
+  // ---------- Game over / restart / share ----------
+  const SHARE_URL = window.FILESHOT_SHARE_URL || location.href.split("#")[0];
+
+  function shareText() {
+    const r = successRate();
+    return `I uploaded ${uploaded} file${uploaded === 1 ? "" : "s"} with ${r === null ? 0 : r}% success in File Shot 🏀 Can you beat me?`;
+  }
+
+  function gameOver() {
+    over = true;
+    if (held) { held = null; drag = null; canvas.style.cursor = "default"; }
+    for (const f of waiting.splice(0)) poofs.push({ f, x: f.x, y: f.y, rot: f.rot, t: 0, quiet: true });
+    clearTimeout(bannerTimer);
+    bannerEl.hidden = true;
+    sfx.gameOver();
+    shake(6);
+
+    const isBest = uploaded > best;
+    if (isBest) { best = uploaded; store.set("fileshot-best", String(best)); }
+    const r = successRate();
+    const secs = Math.round(time - gameStart);
+    $("finalUploaded").textContent = uploaded;
+    $("finalMissed").textContent = missed;
+    $("finalRate").textContent = r === null ? "–" : r + "%";
+    $("finalStreak").textContent = bestStreak;
+    $("finalTime").textContent = secs >= 60 ? `${Math.floor(secs / 60)}m ${secs % 60}s` : `${secs}s`;
+    $("finalBest").textContent = isBest && uploaded > 0 ? "New best!" : `Best: ${best}`;
+    $("finalBest").classList.toggle("new", isBest && uploaded > 0);
+    const text = shareText();
+    const full = `${text} ${SHARE_URL}`;
+    $("shareX").href = `https://twitter.com/intent/tweet?text=${encodeURIComponent(full)}`;
+    $("shareWa").href = `https://wa.me/?text=${encodeURIComponent(full)}`;
+    $("shareText").value = full;
+    $("shareFallback").hidden = true;
+    $("shareNote").textContent = "";
+
+    setTimeout(() => {
+      overEl.hidden = false;
+      overEl.classList.add("show");
+      $("restart").focus({ preventScroll: true });
+    }, 900);
+  }
+
+  function restart() {
+    overEl.hidden = true;
+    overEl.classList.remove("show");
+    uploaded = 0; missed = 0; streak = 0; bestStreak = 0; missRun = 0;
+    level = 1; levelUploads = 0; levelStart = time; gameStart = time;
+    over = false;
+    waiting.length = 0; flying.length = 0; poofs.length = 0;
+    held = null; drag = null;
+    firstSpawn = true;
+    nextSpawnAt = time + 0.3;
+    updateHud();
+    updateLevelBar();
+  }
+
+  async function shareScore() {
+    const text = shareText();
+    const note = $("shareNote");
+    if (navigator.share) {
+      try {
+        await navigator.share({ title: "File Shot", text, url: SHARE_URL });
+        note.textContent = "Shared!";
+        return;
+      } catch (e) {
+        if (e && e.name === "AbortError") return;
+      }
+    }
+    const full = `${text} ${SHARE_URL}`;
+    try {
+      await navigator.clipboard.writeText(full);
+      note.textContent = "Copied. Paste it to your friends.";
+    } catch (e) {
+      const box = $("shareFallback");
+      box.hidden = false;
+      const input = $("shareText");
+      input.focus();
+      input.select();
+      note.textContent = "Copy the text below and send it to your friends.";
+    }
+  }
+
+  $("restart").addEventListener("click", () => { sfx.unlock(); restart(); });
+  $("share").addEventListener("click", shareScore);
 
   // ---------- Physics ----------
   function rimCollide(f) {
@@ -621,36 +879,56 @@
     if (f.trail.length > 9) f.trail.shift();
 
     const out = f.x < -150 || f.x > W + 150 || f.y > H + 150;
-    if (out || (f.landed && f.restT > 0.7) || f.age > 6) f.fading = true;
+    if (out || (f.landed && f.restT > 0.5) || f.age > 6) f.fading = true;
 
     if (f.fading && !f.scored) onMiss(f);
+  }
+
+  function updateWaiting(f, dt) {
+    if (f.state === "spawning") {
+      f.t += dt / 0.45;
+      if (f.t >= 1) { f.t = 1; f.state = "idle"; }
+    } else if (f.state === "dragging") {
+      const info = dragInfo();
+      f.x = lerp(f.x, f.ox + info.ox, 1 - Math.exp(-30 * dt));
+      f.y = lerp(f.y, f.oy + info.oy, 1 - Math.exp(-30 * dt));
+      f.rot = lerp(f.rot, clamp(info.nx * info.power * 0.35, -0.35, 0.35), 1 - Math.exp(-12 * dt));
+    } else if (f.state === "returning") {
+      f.x = lerp(f.x, f.ox, 1 - Math.exp(-14 * dt));
+      f.y = lerp(f.y, f.oy, 1 - Math.exp(-14 * dt));
+      f.rot = lerp(f.rot, 0, 1 - Math.exp(-14 * dt));
+      if (Math.hypot(f.x - f.ox, f.y - f.oy) < 0.5) { f.x = f.ox; f.y = f.oy; f.state = "idle"; }
+    }
+    if (f.deadline !== undefined) {
+      const left = f.deadline - time;
+      // a soft tick each second in the last 3 seconds
+      const sec = Math.ceil(left);
+      if (left < 3 && sec !== f.lastTick && sec > 0) { f.lastTick = sec; sfx.tick(); }
+      if (left <= 0) expire(f);
+    }
   }
 
   // ---------- Main update ----------
   function update(dt) {
     time += dt;
 
-    if (!cur && time >= nextSpawnAt) spawn();
-    if (cur) {
-      L.oyRef = cur.oy;
-      if (cur.state === "spawning") {
-        cur.t += dt / 0.45;
-        if (cur.t >= 1) { cur.t = 1; cur.state = "idle"; }
-      } else if (cur.state === "dragging") {
-        const info = dragInfo();
-        cur.x = lerp(cur.x, cur.ox + info.ox, 1 - Math.exp(-30 * dt));
-        cur.y = lerp(cur.y, cur.oy + info.oy, 1 - Math.exp(-30 * dt));
-        cur.rot = lerp(cur.rot, clamp(info.nx * info.power * 0.35, -0.35, 0.35), 1 - Math.exp(-12 * dt));
-      } else if (cur.state === "returning") {
-        cur.x = lerp(cur.x, cur.ox, 1 - Math.exp(-14 * dt));
-        cur.y = lerp(cur.y, cur.oy, 1 - Math.exp(-14 * dt));
-        cur.rot = lerp(cur.rot, 0, 1 - Math.exp(-14 * dt));
-        if (Math.hypot(cur.x - cur.ox, cur.y - cur.oy) < 0.5) { cur.x = cur.ox; cur.y = cur.oy; cur.state = "idle"; }
+    if (!over) {
+      if (level === 1) {
+        const cfg = LEVELS[1];
+        if (levelUploads >= cfg.uploadsToPass || time - levelStart >= cfg.secondsToPass) setLevel(2);
       }
+      const p = levelParams();
+      if (waiting.length < p.target && time >= nextSpawnAt) {
+        spawn();
+        nextSpawnAt = time + p.interval;
+      }
+      for (const f of waiting.slice()) updateWaiting(f, dt);
     }
 
     for (const f of flying) updateFlying(f, dt);
     for (let i = flying.length - 1; i >= 0; i--) if (flying[i].alpha <= 0) flying.splice(i, 1);
+    for (const p of poofs) p.t += dt;
+    for (let i = poofs.length - 1; i >= 0; i--) if (poofs[i].t >= 0.5) poofs.splice(i, 1);
 
     updateNet(dt);
 
@@ -681,7 +959,7 @@
     for (const r of rings) r.t += dt;
     for (let i = rings.length - 1; i >= 0; i--) if (rings[i].t >= rings[i].life) rings.splice(i, 1);
 
-    if (score > 0) hintAlpha = Math.max(0, hintAlpha - dt * 1.5);
+    if (uploaded > 0) hintAlpha = Math.max(0, hintAlpha - dt * 1.5);
   }
 
   // ---------- Drawing ----------
@@ -723,7 +1001,7 @@
 
   function drawDropZone() {
     const d = L.dz;
-    const active = (cur && cur.state === "dragging") || osDrag;
+    const active = !!held || osDrag;
     ctx.save();
     ctx.shadowColor = C.dark ? "rgba(0,0,0,0.4)" : "rgba(30,45,80,0.06)";
     ctx.shadowBlur = 30 * u;
@@ -940,7 +1218,8 @@
   }
 
   // A file card with a folded corner. `flip` tumbles it in 3D.
-  function drawFile(f, x, y, scale, rot, flip, alpha, lift) {
+  // `timer` (0..1) draws the deadline ring around the card.
+  function drawFile(f, x, y, scale, rot, flip, alpha, lift, timer) {
     const w = L.cardW, h = L.cardH, fold = 15 * u, r = 7 * u;
     const fx = Math.cos(flip);
     const back = fx < 0;
@@ -1045,7 +1324,29 @@
     sheen.addColorStop(0.55, "rgba(255,255,255,0)");
     ctx.fillStyle = sheen;
     ctx.fillRect(-w / 2, -h / 2, w, h);
+    // red wash as time runs out
+    if (timer !== undefined && timer < 0.3) {
+      ctx.fillStyle = `rgba(239,68,68,${(0.3 - timer) * 0.6 * (0.6 + 0.4 * Math.sin(time * 14))})`;
+      ctx.fillRect(-w / 2, -h / 2, w, h);
+    }
     ctx.restore();
+
+    // deadline ring
+    if (timer !== undefined) {
+      const pad = 7 * u, lw = 4 * u;
+      const color = timerColor(timer);
+      const len = rrFromTop(-w / 2 - pad, -h / 2 - pad, w + pad * 2, h + pad * 2, r + pad * 0.8);
+      ctx.lineWidth = lw;
+      ctx.strokeStyle = C.dark ? "rgba(255,255,255,0.1)" : "rgba(20,30,50,0.08)";
+      ctx.stroke();
+      ctx.save();
+      ctx.setLineDash([Math.max(0.001, len * timer), len + 10]);
+      ctx.lineCap = "round";
+      ctx.strokeStyle = color;
+      if (timer < 0.3) { ctx.shadowColor = color; ctx.shadowBlur = 12 * u; }
+      ctx.stroke();
+      ctx.restore();
+    }
 
     ctx.restore();
   }
@@ -1070,11 +1371,12 @@
   }
 
   function drawTrajectory() {
-    if (!cur || cur.state !== "dragging") return;
+    if (!held) return;
+    const f = held;
     const info = dragInfo();
     if (info.power < 0.05) return;
-    const v = launchVelocity(info);
-    let x = cur.x, y = cur.y, vx = v.vx, vy = v.vy;
+    const v = launchVelocity(f, info);
+    let x = f.x, y = f.y, vx = v.vx, vy = v.vy;
     const step = 1 / 120;
     const dots = 20;
     const ready = info.power >= 0.12;
@@ -1096,29 +1398,30 @@
     ctx.setLineDash([4 * u, 5 * u]);
     ctx.strokeStyle = C.line;
     ctx.lineWidth = 1.5 * u;
-    rr(cur.ox - L.cardW / 2, cur.oy - L.cardH / 2, L.cardW, L.cardH, 8 * u);
+    rr(f.ox - L.cardW / 2, f.oy - L.cardH / 2, L.cardW, L.cardH, 8 * u);
     ctx.stroke();
     ctx.beginPath();
-    ctx.moveTo(cur.ox, cur.oy);
-    ctx.lineTo(cur.x, cur.y);
+    ctx.moveTo(f.ox, f.oy);
+    ctx.lineTo(f.x, f.y);
     ctx.stroke();
     ctx.restore();
 
-    // power ring
+    // power ring (skipped in level 3, where the deadline ring sits around the card)
+    if (f.deadline !== undefined) return;
     const pr = L.cardH * 0.72;
     ctx.save();
     ctx.lineWidth = 3.5 * u;
     ctx.lineCap = "round";
     ctx.strokeStyle = C.dark ? "rgba(255,255,255,0.08)" : "rgba(20,30,50,0.07)";
     ctx.beginPath();
-    ctx.arc(cur.x, cur.y, pr, 0, Math.PI * 2);
+    ctx.arc(f.x, f.y, pr, 0, Math.PI * 2);
     ctx.stroke();
-    const pg = ctx.createLinearGradient(cur.x - pr, 0, cur.x + pr, 0);
+    const pg = ctx.createLinearGradient(f.x - pr, 0, f.x + pr, 0);
     pg.addColorStop(0, C.accent);
     pg.addColorStop(1, C.orange);
     ctx.strokeStyle = pg;
     ctx.beginPath();
-    ctx.arc(cur.x, cur.y, pr, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * info.power);
+    ctx.arc(f.x, f.y, pr, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * info.power);
     ctx.stroke();
     ctx.restore();
   }
@@ -1150,41 +1453,54 @@
     drawFile(f, f.x, f.y, scale, f.rot, f.flip, Math.max(0, f.alpha), lift);
   }
 
-  function drawCurrent() {
-    if (!cur) return;
-    let scale = 1, y = cur.y, lift = 0.15;
-    if (cur.state === "spawning") scale = Math.max(0.01, easeOutBack(cur.t));
-    if (cur.state === "idle") y = cur.oy - Math.abs(Math.sin(time * 2.6)) * 4 * u;
-    if (cur.state === "dragging") { scale = 1.06; lift = 1; }
+  function drawWaiting(f) {
+    let scale = 1, x = f.x, y = f.y, lift = 0.15, rot = f.rot;
+    if (f.state === "spawning") scale = Math.max(0.01, easeOutBack(f.t));
+    if (f.state === "idle") y = f.oy - Math.abs(Math.sin(time * 2.6 + f.ox * 0.01)) * 4 * u;
+    if (f.state === "dragging") { scale = 1.06; lift = 1; }
 
-    // invite ring
-    if (cur.state === "idle" && shots < 3) {
+    let timer;
+    if (f.deadline !== undefined) {
+      timer = clamp((f.deadline - time) / DEADLINE, 0, 1);
+      if (timer < 0.3 && !reduceMotion) { // jitter when it's about to expire
+        x += Math.sin(time * 50 + f.ox) * 1.6 * u;
+        rot += Math.sin(time * 37 + f.ox) * 0.03;
+      }
+    }
+
+    // invite ring for brand new players
+    if (f.state === "idle" && shots < 3 && level === 1) {
       const t = (time * 0.9) % 1;
       ctx.save();
       ctx.globalAlpha = (1 - t) * 0.5;
       ctx.strokeStyle = C.accent;
       ctx.lineWidth = 2 * u;
       ctx.beginPath();
-      ctx.arc(cur.x, cur.oy, L.cardH * (0.55 + t * 0.5), 0, Math.PI * 2);
+      ctx.arc(f.x, f.oy, L.cardH * (0.55 + t * 0.5), 0, Math.PI * 2);
       ctx.stroke();
       ctx.restore();
     }
 
-    drawFile(cur, cur.x, y, scale, cur.rot, 0, 1, lift);
+    drawFile(f, x, y, scale, rot, 0, 1, lift, timer);
 
-    // file name under the card
-    if (cur.state !== "dragging") {
+    // file name under the card (only when it's alone, so labels never collide)
+    if (f.state !== "dragging" && waiting.length === 1) {
       ctx.save();
-      ctx.globalAlpha = cur.state === "spawning" ? cur.t : 1;
+      ctx.globalAlpha = f.state === "spawning" ? f.t : 1;
       ctx.fillStyle = C.muted;
       ctx.font = `500 ${Math.max(11, 13 * u)}px Inter, system-ui, sans-serif`;
       ctx.textAlign = "center";
       ctx.textBaseline = "top";
-      let label = `${cur.name}.${cur.ext.toLowerCase()}`;
+      let label = `${f.name}.${f.ext.toLowerCase()}`;
       if (label.length > 24) label = label.slice(0, 21) + "…";
-      ctx.fillText(label, cur.x, L.floorY + 8 * u);
+      ctx.fillText(label, f.x, L.floorY + 8 * u);
       ctx.restore();
     }
+  }
+
+  function drawPoof(p) {
+    const t = p.t / 0.5;
+    drawFile(p.f, p.x, p.y - t * 10 * u, 1 - t * 0.6, p.rot + t * 0.4, 0, 1 - t, 0.1, p.quiet ? undefined : 0);
   }
 
   function drawEffects() {
@@ -1238,14 +1554,14 @@
   }
 
   function drawHint() {
-    if (hintAlpha <= 0) return;
+    if (hintAlpha <= 0 || over) return;
     ctx.save();
     ctx.globalAlpha = hintAlpha * (0.65 + 0.35 * Math.sin(time * 3));
     ctx.fillStyle = C.muted;
     ctx.font = `500 ${Math.max(12, 14 * u)}px Inter, system-ui, sans-serif`;
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
-    ctx.fillText("Drag the file toward the hoop, then let go", L.cx, L.rimY + L.netH + 62 * u);
+    ctx.fillText("Drag a file toward the hoop, then let go", L.cx, L.rimY + L.netH + 62 * u);
     ctx.restore();
   }
 
@@ -1259,7 +1575,7 @@
     drawDropZone();
 
     for (const f of flying) if (!f.behind) drawFloorShadow(f.x, f.y, 1 - 0.3 * f.depth, f.alpha);
-    if (cur) drawFloorShadow(cur.x, cur.state === "dragging" ? cur.y : L.floorY - L.cardH / 2, 1, 1);
+    for (const f of waiting) drawFloorShadow(f.x, f.state === "dragging" ? f.y : L.floorY - L.cardH / 2, 1, 1);
 
     const layers = [[], [], []];
     for (const f of flying) layers[fileLayer(f)].push(f);
@@ -1275,7 +1591,9 @@
     drawHint();
     drawTrajectory();
     layers[2].forEach(drawFlying);
-    drawCurrent();
+    poofs.forEach(drawPoof);
+    for (const f of waiting) if (f !== held) drawWaiting(f);
+    if (held) drawWaiting(held);             // the dragged file always on top
     drawEffects();
 
     ctx.restore();
@@ -1287,18 +1605,26 @@
     return { x: e.clientX - r.left, y: e.clientY - r.top };
   }
 
-  function overFile(p) {
-    if (!cur || (cur.state !== "idle" && cur.state !== "spawning" && cur.state !== "returning")) return false;
-    return Math.hypot(p.x - cur.x, p.y - cur.y) < Math.max(L.cardH * 0.85, 56);
+  function fileAt(p) {
+    if (over || held) return null;
+    const radius = Math.max(L.cardH * 0.85, 56);
+    let bestF = null, bestD = radius;
+    for (const f of waiting) {
+      const d = Math.hypot(p.x - f.x, p.y - f.y);
+      if (d < bestD) { bestD = d; bestF = f; }
+    }
+    return bestF;
   }
 
   canvas.addEventListener("pointerdown", (e) => {
     sfx.unlock();
     const p = pointerPos(e);
-    if (!overFile(p)) return;
+    const f = fileAt(p);
+    if (!f) return;
     e.preventDefault();
-    if (cur.state === "spawning") cur.t = 1;
-    cur.state = "dragging";
+    if (f.state === "spawning") f.t = 1;
+    f.state = "dragging";
+    held = f;
     drag = { id: e.pointerId, sx: p.x, sy: p.y, px: p.x, py: p.y };
     try { canvas.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ }
     canvas.style.cursor = "grabbing";
@@ -1310,14 +1636,14 @@
       drag.px = p.x;
       drag.py = p.y;
     } else {
-      canvas.style.cursor = overFile(p) ? "grab" : "default";
+      canvas.style.cursor = fileAt(p) ? "grab" : "default";
     }
   });
 
   function endDrag(e, cancelled) {
     if (!drag || e.pointerId !== drag.id) return;
-    if (cur && cur.state === "dragging") {
-      if (cancelled) cur.state = "returning";
+    if (held) {
+      if (cancelled) { held.state = "returning"; held = null; }
       else launch();
     }
     drag = null;
@@ -1329,15 +1655,15 @@
   // Real files: drop them anywhere on the page (or use the "Your files" button)
   function loadRealFiles(list) {
     const files = Array.from(list || []);
-    if (!files.length) return;
+    if (!files.length || over) return;
     files.slice(0, 50).forEach((f) => queue.push(makeRealFile(f)));
-    if (cur && cur.state !== "dragging") {
-      const keep = { ox: cur.ox, oy: cur.oy };
-      const info = queue.shift();
-      cur = { ...info, ...keep, x: keep.ox, y: keep.oy, rot: 0, state: "spawning", t: 0 };
-      sfx.pop();
+    // swap the waiting fake files for real ones straight away
+    for (const f of waiting) {
+      if (f === held || f.real || !queue.length) continue;
+      Object.assign(f, queue.shift(), { state: "spawning", t: 0 });
     }
-    floatText(files.length === 1 ? "File loaded — take the shot!" : `${files.length} files loaded — take the shots!`,
+    sfx.pop();
+    floatText(files.length === 1 ? "File loaded. Take the shot!" : `${files.length} files loaded. Take the shots!`,
       L.cx, L.rimY + L.netH + 34 * u, { size: 16 * u, color: C.accent, weight: 700, life: 1.8 });
   }
 
@@ -1362,21 +1688,28 @@
   let resizeRaf = 0;
   window.addEventListener("resize", () => {
     cancelAnimationFrame(resizeRaf);
-    resizeRaf = requestAnimationFrame(() => { layout(); respawnPosition(); });
+    resizeRaf = requestAnimationFrame(() => { layout(); repositionWaiting(); });
   });
 
   layout();
+  updateHud();
 
-  // expose a tiny hook for automated checks
-  window.__fileShot = { get score() { return score; }, get L() { return L; }, get cur() { return cur; }, flying };
+  // a tiny hook for automated checks
+  window.__fileShot = {
+    get uploaded() { return uploaded; }, get missed() { return missed; }, get level() { return level; },
+    get over() { return over; }, get L() { return L; }, waiting, flying,
+    setLevel: (n) => setLevel(n),
+  };
 
   const STEP = 1 / 120;
-  let last = performance.now(), acc = 0;
+  let last = performance.now(), acc = 0, hudT = 0;
   function frame(now) {
     acc += Math.min(0.05, (now - last) / 1000);
     last = now;
     while (acc >= STEP) { update(STEP); acc -= STEP; }
     render();
+    hudT += 1;
+    if (hudT % 10 === 0) updateLevelBar();
     requestAnimationFrame(frame);
   }
   requestAnimationFrame(frame);
