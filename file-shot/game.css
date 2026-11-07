@@ -83,16 +83,6 @@ html, body {
 
 .hud a, .hud button, .hud label { pointer-events: auto; }
 
-.back {
-  display: inline-block;
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--muted);
-  text-decoration: none;
-  margin-bottom: 6px;
-}
-.back:hover { color: var(--accent); }
-
 .hud h1 {
   margin: 0;
   font-size: clamp(26px, 4vw, 38px);
@@ -510,7 +500,6 @@ html, body {
 /* ---------- Small screens ---------- */
 @media (max-width: 640px) {
   .hud { padding-left: 16px; padding-right: 16px; padding-top: max(14px, env(safe-area-inset-top)); }
-  .back { margin-bottom: 4px; }
   .hud h1 { font-size: 24px; }
   .hud-left p { font-size: 13px; }
   .stat { min-width: 52px; padding: 0 7px; }

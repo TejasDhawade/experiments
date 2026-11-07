@@ -1,9 +1,10 @@
 /* File Shot service worker: makes the game installable and playable offline.
    Game files are served network-first (so updates arrive straight away)
    and fall back to the cached copy when there's no connection. */
-const CACHE = "fileshot-v1";
+const CACHE = "fileshot-v2";
 const GAME_FILES = [
-  "game.html",
+  "",
+  "index.html",
   "game.css",
   "game.js",
   "manifest.webmanifest",
