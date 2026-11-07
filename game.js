@@ -1684,6 +1684,29 @@
     picker.value = "";
   });
 
+  // ---------- Install as an app ----------
+  // Works when the page is served over http(s), e.g. GitHub Pages. Opening the file directly skips this.
+  const installBtn = $("install");
+  let installPrompt = null;
+  if ("serviceWorker" in navigator && /^https?:$/.test(location.protocol)) {
+    window.addEventListener("load", () => {
+      navigator.serviceWorker.register("sw.js").catch(() => { /* offline support is optional */ });
+    });
+  }
+  window.addEventListener("beforeinstallprompt", (e) => {
+    e.preventDefault(); // show our own Install button instead of the browser's mini bar
+    installPrompt = e;
+    installBtn.hidden = false;
+  });
+  installBtn.addEventListener("click", async () => {
+    if (!installPrompt) return;
+    installPrompt.prompt();
+    try { await installPrompt.userChoice; } catch (e) { /* ignore */ }
+    installPrompt = null;
+    installBtn.hidden = true;
+  });
+  window.addEventListener("appinstalled", () => { installBtn.hidden = true; });
+
   // ---------- Boot ----------
   let resizeRaf = 0;
   window.addEventListener("resize", () => {
