@@ -74,13 +74,6 @@
   <!-- Upload "progress" toasts appear here after each basket -->
   <ul class="tray" id="tray" aria-live="polite"></ul>
 
-  <!-- Level-up announcement -->
-  <div class="banner" id="banner" role="status" hidden>
-    <span class="kicker"></span>
-    <strong class="title"></strong>
-    <span class="sub"></span>
-  </div>
-
   <!-- ========== Start screen ========== -->
   <div class="screen menu" id="menu">
     <div class="card menu-card" role="dialog" aria-modal="true" aria-labelledby="menuTitle">
@@ -92,7 +85,7 @@
         <div class="menu-buttons">
           <button class="cta big" id="startClassic" type="button">
             <span>Start game</span>
-            <small>Classic · 3 levels</small>
+            <small>Classic · 5 levels</small>
           </button>
           <button class="cta big alt" id="startTimed" type="button">
             <span>Timed run</span>
@@ -107,9 +100,10 @@
         <div class="how" id="howPanel" hidden>
           <ul>
             <li><b>Shoot:</b> drag a file toward the hoop. The further you pull, the harder you throw. Let go to shoot.</li>
-            <li><b>File weight:</b> <span class="tag light">LIGHT</span> files need a short pull, <span class="tag heavy">HEAVY</span> files need a long one.</li>
-            <li><b>Classic:</b> three levels. In level 3 each file has 8 seconds, and 6 misses in a row ends the game.</li>
-            <li><b>Revives:</b> every 10 uploads in a row earns one. It saves you from a game over.</li>
+            <li><b>Classic:</b> five levels, each adding one new rule. You'll get a short briefing before each one.</li>
+            <li><b>File weight:</b> <span class="tag light">LIGHT</span> needs a short pull, <span class="tag normal">NORMAL</span> throws as usual, <span class="tag heavy">HEAVY</span> needs a long pull.</li>
+            <li><b>Losing:</b> from level 4, miss 6 in a row and the game ends. Don't touch virus files: that counts as a miss.</li>
+            <li><b>Revives:</b> every 10 uploads in a row earns one. Use it to keep going when you'd otherwise lose.</li>
             <li><b>Timed run:</b> 60 seconds on one clock. Clean swishes add 2 seconds.</li>
           </ul>
         </div>
@@ -122,6 +116,35 @@
         <h2>Thanks for playing!</h2>
         <p class="tagline">You can close this tab now.</p>
         <button class="cta" id="goodbyeBack" type="button">Back to menu</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ========== Level briefing ========== -->
+  <div class="screen" id="intro" hidden>
+    <div class="card intro-card" role="dialog" aria-modal="true" aria-labelledby="introTitle">
+      <p class="over-kicker" id="introKicker">Level 1 of 5</p>
+      <h2 id="introTitle">Warm-up</h2>
+      <ul class="intro-rules" id="introRules"></ul>
+      <p class="intro-goal" id="introGoal">Upload 3 files to move on</p>
+      <div class="menu-buttons">
+        <button class="cta big" id="introStart" type="button">Start level</button>
+        <button class="link" id="introExit" type="button">Exit to menu</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ========== Revive offer ========== -->
+  <div class="screen" id="revivePrompt" hidden>
+    <div class="card revive-card" role="dialog" aria-modal="true" aria-labelledby="reviveTitle">
+      <div class="revive-heart" aria-hidden="true">
+        <svg viewBox="0 0 24 24"><path d="M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.6-7 10-7 10Z"/><path d="M12 9.5v5M9.5 12h5"/></svg>
+      </div>
+      <h2 id="reviveTitle">Use a revive?</h2>
+      <p class="tagline">That was 6 misses in a row. You have <b id="reviveCount">1</b> <span id="reviveWord">revive</span>. Use one to clear your misses and keep going.</p>
+      <div class="menu-buttons">
+        <button class="cta big alt-good" id="useRevive" type="button">Use revive</button>
+        <button class="cta ghost" id="declineRevive" type="button">End game</button>
       </div>
     </div>
   </div>
