@@ -22,6 +22,12 @@
       here, more than 5 misses in a row ends the game.
    5. Quarantine: virus files appear. Touching one counts as a miss.
 
+   Points: plain files (levels 1-2) and light files score 1, normal 2,
+   heavy 3. Light files are the most common, heavy the rarest. On timed
+   files, light files get the most time and heavy files the least.
+
+   Streaks reset at the start of level 4 and level 5.
+
    Revives: every 10 uploads in a row earns one. When the game would end,
    the player is asked whether to use one.
 
@@ -33,17 +39,21 @@
   "use strict";
 
   // ---------- Tuning ----------
+  // Share of light / normal / heavy files: mostly light when weights are introduced, more heavies later
+  const MIX_INTRO = { light: 0.5, medium: 0.35, heavy: 0.15 };
+  const MIX_LATER = { light: 0.4, medium: 0.35, heavy: 0.25 };
+
   // Each level adds one new rule. `toPass` uploads (or `seconds`) move you on.
   // `lose`: misses in a row can end the game from this level on.
   const LEVELS = {
     1: { name: "Warm-up", toPass: 3, seconds: 35 },
     2: { name: "Rush hour", toPass: 8 },
-    3: { name: "Heavy lifting", toPass: 8, weights: true },
-    4: { name: "Deadline", toPass: 8, weights: true, deadline: true, lose: true },
-    5: { name: "Quarantine", weights: true, deadline: true, lose: true, viruses: true },
+    3: { name: "Heavy lifting", toPass: 8, weights: true, mix: MIX_INTRO },
+    4: { name: "Deadline", toPass: 8, weights: true, mix: MIX_LATER, deadline: true, lose: true, freshStreak: true },
+    5: { name: "Quarantine", weights: true, mix: MIX_LATER, deadline: true, lose: true, viruses: true, freshStreak: true },
   };
   const LAST_LEVEL = 5;
-  const DEADLINE = 8;          // seconds per file from level 4
+  const DEADLINE = 8;          // seconds per plain file (weighted files use WEIGHTS[].ttl)
   const MAX_MISS_RUN = 5;      // the 6th miss in a row ends the game
   const VIRUS_LIFE = 7;        // seconds a virus sits on the floor before vanishing
   const VIRUS_NAMES = [
@@ -59,10 +69,11 @@
   const HEAVY_MIN = 10 * 1024 * 1024;
   // Colour code: light = blue, normal = yellow, heavy = red. "plain" = before weights are introduced.
   const WEIGHTS = {
-    plain:  { pull: 1,    scale: 1,    edge: 2.5, label: "",       code: "" },
-    light:  { pull: 0.7,  scale: 0.9,  edge: 1.6, label: "LIGHT",  code: "#2563eb" },
-    medium: { pull: 1,    scale: 1,    edge: 2.5, label: "NORMAL", code: "#eab308" },
-    heavy:  { pull: 1.38, scale: 1.12, edge: 5,   label: "HEAVY",  code: "#dc2626" },
+    // points per upload, and seconds on the floor when files are timed
+    plain:  { pull: 1,    scale: 1,    edge: 2.5, label: "",       code: "",        points: 1, ttl: 8 },
+    light:  { pull: 0.7,  scale: 0.9,  edge: 1.6, label: "LIGHT",  code: "#2563eb", points: 1, ttl: 10 },
+    medium: { pull: 1,    scale: 1,    edge: 2.5, label: "NORMAL", code: "#eab308", points: 2, ttl: 8 },
+    heavy:  { pull: 1.38, scale: 1.12, edge: 5,   label: "HEAVY",  code: "#dc2626", points: 3, ttl: 6 },
   };
   const weightOf = (bytes) => (bytes < LIGHT_MAX ? "light" : bytes >= HEAVY_MIN ? "heavy" : "medium");
   const W_ = (f) => WEIGHTS[f.weight] || WEIGHTS.plain;
@@ -81,6 +92,7 @@
   const ctx = canvas.getContext("2d");
   const scorePill = $("scorePill");
   const uploadedEl = $("uploaded");
+  const pointsEl = $("points");
   const missedEl = $("missed");
   const rateEl = $("rate");
   const levelNameEl = $("levelName");
@@ -193,11 +205,12 @@
     return (bytes / 1024 / 1024).toFixed(1) + " MB";
   }
 
-  function makeFakeFile() {
+  function makeFakeFile(mix = { light: 1 / 3, medium: 1 / 3, heavy: 1 / 3 }) {
     const [name, ext] = pick(FAKE_FILES);
-    // an even mix of light, medium and heavy files
+    // pick the weight class from the level's mix, then a size inside it
     const r = Math.random();
-    const mb = r < 0.33 ? rand(0.02, 0.9) : r < 0.67 ? rand(1.2, 9.5) : rand(10.5, 48);
+    const kind = r < mix.light ? "light" : r < mix.light + mix.medium ? "medium" : "heavy";
+    const mb = kind === "light" ? rand(0.02, 0.9) : kind === "medium" ? rand(1.2, 9.5) : rand(10.5, 48);
     const bytes = Math.round(mb * 1024 * 1024);
     return { name, ext, color: TYPE_COLORS[ext], bytes, weight: "plain", size: formatSize(bytes) };
   }
@@ -356,9 +369,10 @@
   }
 
   // ---------- Game state ----------
-  let uploaded = 0, missed = 0, streak = 0, bestStreak = 0, missRun = 0;
-  let best = parseInt(store.get("fileshot-best", "0"), 10) || 0;
-  let bestTimed = parseInt(store.get("fileshot-best-timed", "0"), 10) || 0;
+  let uploaded = 0, missed = 0, streak = 0, bestStreak = 0, missRun = 0, points = 0;
+  // best scores are in points
+  let best = parseInt(store.get("fileshot-best-points", "0"), 10) || 0;
+  let bestTimed = parseInt(store.get("fileshot-best-timed-points", "0"), 10) || 0;
   let level = 1, levelUploads = 0, levelStart = 0, gameStart = 0;
   let mode = "classic";      // "classic" | "timed"
   let phase = "menu";        // "menu" | "intro" | "playing" | "levelup" | "revive" | "paused" | "over"
@@ -384,11 +398,12 @@
   let hintAlpha = 1;
   let rimDy = 0, rimV = 0;
   let boardShake = 0;
+  let rimGlow = 0;           // flash on the rim after a basket
   let camShake = 0;
   let osDrag = false, osDragTimer = 0;
   let time = 0;
 
-  const LV = () => (mode === "classic" ? LEVELS[level] : { weights: true });
+  const LV = () => (mode === "classic" ? LEVELS[level] : { weights: true, mix: MIX_LATER });
 
   function levelParams() {
     if (mode === "timed") return { target: Math.min(L.capacity, 3), interval: 0.9 };
@@ -484,13 +499,13 @@
   }
 
   function spawn(virus = false) {
-    const info = virus ? makeVirusFile() : queue.length ? queue.shift() : makeFakeFile();
+    const info = virus ? makeVirusFile() : queue.length ? queue.shift() : makeFakeFile(LV().mix);
     if (!virus && LV().weights) info.weight = weightOf(info.bytes);
     const x = clamp(pickSpawnX(), L.margin, W - L.margin);
     const y = restY(info);
     const f = { ...info, ox: x, oy: y, x, y, rot: 0, state: "spawning", t: 0, born: time };
     if (virus) f.expires = time + VIRUS_LIFE;
-    else if (LV().deadline) f.deadline = time + 0.45 + DEADLINE;
+    else if (LV().deadline) { f.ttl = W_(f).ttl; f.deadline = time + 0.45 + f.ttl; }
     waiting.push(f);
     if (virus) sfx.glitch(); else sfx.pop();
   }
@@ -605,7 +620,7 @@
         x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s,
         rot: rand(0, 6.28), vr: rand(-12, 12),
         w: rand(5, 10) * u, h: rand(3, 6) * u,
-        color: pick(CONFETTI), life: rand(1.1, 1.8), t: 0, kind: "confetti",
+        color: pick(CONFETTI), life: rand(1.1, 1.8), t: 0, kind: "confetti", dot: Math.random() < 0.3,
       });
     }
   }
@@ -618,7 +633,7 @@
   }
 
   function floatText(text, x, y, opts = {}) {
-    texts.push({ text, x, y, t: 0, life: opts.life || 1.3, size: opts.size || 26, color: opts.color || C.text, weight: opts.weight || 800 });
+    texts.push({ text, x, y, t: 0, life: opts.life || 1.3, size: opts.size || 26, color: opts.color || C.text, weight: opts.weight || 800, glow: !!opts.glow });
   }
 
   function shake(amount) {
@@ -642,6 +657,7 @@
 
   function updateHud() {
     uploadedEl.textContent = uploaded;
+    pointsEl.textContent = points;
     missedEl.textContent = missed;
     const r = successRate();
     rateEl.textContent = r === null ? "–" : r + "%";
@@ -695,19 +711,22 @@
     },
     3: {
       rules: [
-        ["⚖️", "Files now have weight, shown by their colour."],
-        [W_TAG("light"), "Under 1 MB. A short pull is enough."],
-        [W_TAG("medium"), "Throws like before."],
-        [W_TAG("heavy"), "10 MB and up. Pull much further."],
+        ["⚖️", "Files now have weight, shown by their colour. Heavier files score more."],
+        [W_TAG("light"), "1 point. Short pull. The most common."],
+        [W_TAG("medium"), "2 points. Throws like before."],
+        [W_TAG("heavy"), "3 points. Pull much further. The rarest."],
       ],
       goal: "Upload 8 files to move on",
     },
     4: {
       rules: [
-        ["⏱️", "Each file has 8 seconds. A dark ring around it runs down and blinks when time is nearly up."],
+        ["⏱️", "Files are timed. A dark ring around each one runs down and blinks near the end."],
+        [W_TAG("light"), "10 seconds"],
+        [W_TAG("medium"), "8 seconds"],
+        [W_TAG("heavy"), "6 seconds. Big points, little time."],
         ["💥", "Files that run out of time count as missed."],
         ["⚠️", "Miss 6 in a row and the game ends."],
-        ["💚", "Every 10 uploads in a row earns a revive you can use to keep going."],
+        ["💚", "Every 10 uploads in a row earns a revive. Your streak starts again from zero here."],
       ],
       goal: "Upload 8 files to move on",
     },
@@ -715,7 +734,7 @@
       rules: [
         ["🦠", "Virus files sneak onto the floor. Don't touch them."],
         ["❌", "Touching a virus counts as a miss. They disappear on their own."],
-        ["⏱️", "Deadlines, weights and the 6-misses rule still apply."],
+        ["⏱️", "Deadlines, weights and the 6-misses rule still apply. Your streak starts again from zero."],
       ],
       goal: "Final level. Survive as long as you can",
     },
@@ -723,7 +742,7 @@
       rules: [
         ["⏱️", `One clock: ${TIMED_SECONDS} seconds. Upload as many files as you can.`],
         ["✨", `Clean swishes add ${SWISH_BONUS} seconds.`],
-        ["⚖️", "Files have weight: blue is light, yellow is normal, red is heavy."],
+        ["⚖️", "Files have weight: blue is light (1 pt), yellow is normal (2 pts), red is heavy (3 pts)."],
         ["👍", "Misses don't end the run, they just waste time."],
       ],
       goal: "Beat your best timed score",
@@ -761,6 +780,8 @@
     levelUploads = 0;
     levelStart = time;
     missRun = 0;
+    // from level 4 on, every level starts with a fresh streak
+    if (mode === "classic" && LEVELS[level].freshStreak) streak = 0;
     nextSpawnAt = time + 0.4;
     nextVirusAt = time + 2.5;
     phase = "playing";
@@ -802,7 +823,9 @@
       return;
     }
 
+    const pts = W_(f).points;
     uploaded++;
+    points += pts;
     levelUploads++;
     streak++;
     bestStreak = Math.max(bestStreak, streak);
@@ -810,7 +833,7 @@
 
     if (clean) swishes++;
     const label = f.banked ? "Bank shot!" : clean ? "Swish!" : pick(["Nice!", "Rattled in!", "Got it!"]);
-    floatText("+1", L.cx, L.rimY - 30 * u, { size: 40 * u, color: C.orange, life: 1.1 });
+    floatText(`+${pts}`, L.cx, L.rimY - 30 * u, { size: (36 + pts * 6) * u, color: W_(f).code || C.orange, life: 1.2, glow: true });
     floatText(label, L.cx, L.rimY - 74 * u, { size: 22 * u, color: C.text, weight: 700, life: 1.2 });
     if (streak >= 3) floatText(`🔥 ${streak} in a row`, L.cx, L.rimY + L.netH + 34 * u, { size: 17 * u, color: C.orange, weight: 700, life: 1.5 });
 
@@ -831,9 +854,10 @@
     }
 
     updateHud();
-    bump(scorePill.querySelector(".stat.up"));
+    bump(scorePill.querySelector(".stat.pts"));
 
     confetti(L.cx, L.rimY, clean ? 70 : 45);
+    rimGlow = 1;
     rings.push({ x: L.cx, y: L.rimY, t: 0, life: 0.6 });
     for (const n of net) if (n.r > 0) n.vy += 220 * u * (n.r / NET_R);
     shake(clean ? 5 : 3);
@@ -911,7 +935,7 @@
     sfx.revive();
     shake(4);
     // a fresh start: give the waiting files their full time again
-    for (const f of waiting) if (f.deadline !== undefined) f.deadline = time + DEADLINE;
+    for (const f of waiting) if (f.deadline !== undefined) f.deadline = time + f.ttl;
     bump(revivesEl);
   }
 
@@ -952,16 +976,17 @@
 
   function shareText() {
     const r = successRate();
+    const pts = `${points} point${points === 1 ? "" : "s"}`;
     const files = `${uploaded} file${uploaded === 1 ? "" : "s"}`;
-    if (mode === "timed") return `I uploaded ${files} in a ${TIMED_SECONDS}-second timed run in File Shot 🏀 Can you beat me?`;
-    return `I uploaded ${files} with ${r === null ? 0 : r}% success in File Shot 🏀 Can you beat me?`;
+    if (mode === "timed") return `I scored ${pts} (${files} uploaded) in a ${TIMED_SECONDS}-second timed run in File Shot 🏀 Can you beat me?`;
+    return `I scored ${pts} (${files} uploaded, ${r === null ? 0 : r}% success) in File Shot 🏀 Can you beat me?`;
   }
 
   function verdict() {
     const r = successRate() || 0;
-    const tier = uploaded === 0 ? "zero"
-      : (mode === "timed" ? uploaded >= 25 : uploaded >= 25 || (uploaded >= 15 && r >= 60)) ? "high"
-      : uploaded >= 8 ? "mid" : "low";
+    const tier = points === 0 ? "zero"
+      : points >= 45 || (points >= 30 && r >= 60) ? "high"
+      : points >= 12 ? "mid" : "low";
     return pick(VERDICTS[tier]);
   }
 
@@ -993,7 +1018,7 @@
     sfx.unlock();
     mode = m;
     clearBoard();
-    uploaded = 0; missed = 0; streak = 0; bestStreak = 0; missRun = 0;
+    uploaded = 0; missed = 0; streak = 0; bestStreak = 0; missRun = 0; points = 0;
     revives = 0; revivesUsed = 0; swishes = 0;
     level = 1; levelUploads = 0; levelStart = time; gameStart = time;
     timeLeft = TIMED_SECONDS; timeBonus = 0;
@@ -1036,26 +1061,28 @@
 
     const timed = mode === "timed";
     const prevBest = timed ? bestTimed : best;
-    const isBest = uploaded > prevBest && uploaded > 0;
+    const isBest = points > prevBest && points > 0;
     if (isBest) {
-      if (timed) { bestTimed = uploaded; store.set("fileshot-best-timed", String(uploaded)); }
-      else { best = uploaded; store.set("fileshot-best", String(uploaded)); }
+      if (timed) { bestTimed = points; store.set("fileshot-best-timed-points", String(points)); }
+      else { best = points; store.set("fileshot-best-points", String(points)); }
     }
     const r = successRate();
     const secs = Math.round(time - gameStart);
 
-    $("overKicker").textContent = timed ? "Time's up" : "Game over";
+    const played = fmtClock(secs);
+    $("overKicker").textContent = `${timed ? "Time's up" : "Game over"} · ${played}`;
     $("overVerdict").textContent = verdict();
+    $("finalPoints").textContent = "0";
+    $("finalPoints").dataset.target = points;
+    $("finalUnit").textContent = points === 1 ? "point" : "points";
     $("finalUploaded").textContent = uploaded;
-    $("finalUnit").textContent = uploaded === 1 ? "file uploaded" : "files uploaded";
     $("finalBest").textContent = isBest ? "New best!" : `Best: ${timed ? bestTimed : best}`;
     $("finalBest").classList.toggle("new", isBest);
     $("finalMissed").textContent = missed;
     $("finalRate").textContent = r === null ? "–" : r + "%";
     $("finalStreak").textContent = bestStreak;
-    $("finalTime").textContent = secs >= 60 ? `${Math.floor(secs / 60)}m ${secs % 60}s` : `${secs}s`;
-    $("finalExtraLabel").textContent = timed ? "Bonus time" : "Level";
-    $("finalExtra").textContent = timed ? `+${timeBonus}s` : `${level} · ${LEVELS[level].name}`;
+    $("finalExtraLabel").textContent = timed ? "Bonus time" : `Level ${level}`;
+    $("finalExtra").textContent = timed ? `+${timeBonus}s` : LEVELS[level].name;
     $("finalLastLabel").textContent = timed ? "Swishes" : "Revives used";
     $("finalLast").textContent = timed ? swishes : revivesUsed;
 
@@ -1066,7 +1093,24 @@
     $("shareFallback").hidden = true;
     $("shareNote").textContent = "";
 
-    setTimeout(() => { if (phase === "over") showScreen("over"); }, 900);
+    setTimeout(() => {
+      if (phase !== "over") return;
+      showScreen("over");
+      countUp($("finalPoints"), points);
+    }, 900);
+  }
+
+  // roll the big score up from zero
+  function countUp(el, target) {
+    if (reduceMotion || target === 0) { el.textContent = target; return; }
+    const start = performance.now(), dur = Math.min(1400, 500 + target * 25);
+    const step = (now) => {
+      const t = clamp((now - start) / dur, 0, 1);
+      el.textContent = Math.round(target * (1 - Math.pow(1 - t, 3)));
+      if (t < 1 && !overEl.hidden) requestAnimationFrame(step);
+      else el.textContent = target;
+    };
+    requestAnimationFrame(step);
   }
 
   async function shareScore() {
@@ -1334,6 +1378,7 @@
     rimDy += rimV * dt;
 
     boardShake = Math.max(0, boardShake - dt * 3);
+    rimGlow = Math.max(0, rimGlow - dt * 1.6);
     camShake = Math.max(0, camShake - dt * 18);
 
     for (const p of particles) {
@@ -1363,6 +1408,20 @@
   function drawBackground() {
     ctx.fillStyle = C.bg;
     ctx.fillRect(0, 0, W, H);
+
+    // two slow, soft colour lights drifting behind everything
+    const blobs = [
+      [0.18 + 0.06 * Math.sin(time * 0.13), 0.22 + 0.05 * Math.cos(time * 0.11), "242,107,29"],
+      [0.84 + 0.05 * Math.cos(time * 0.09), 0.7 + 0.06 * Math.sin(time * 0.12), "59,130,246"],
+    ];
+    for (const [bx, by, rgb] of blobs) {
+      const r = Math.max(W, H) * 0.55;
+      const bg = ctx.createRadialGradient(bx * W, by * H, 0, bx * W, by * H, r);
+      bg.addColorStop(0, `rgba(${rgb},${C.dark ? 0.16 : 0.1})`);
+      bg.addColorStop(1, `rgba(${rgb},0)`);
+      ctx.fillStyle = bg;
+      ctx.fillRect(0, 0, W, H);
+    }
 
     // soft spotlight on the hoop
     const g = ctx.createRadialGradient(L.cx, L.rimY - L.bh * 0.4, 10, L.cx, L.rimY - L.bh * 0.4, Math.max(W, H) * 0.75);
@@ -1564,6 +1623,10 @@
     const lw = L.tube * 2;
     ctx.save();
     ctx.lineCap = "round";
+    if (rimGlow > 0) {
+      ctx.shadowColor = `rgba(255,150,60,${rimGlow})`;
+      ctx.shadowBlur = 26 * u * rimGlow;
+    }
     ctx.beginPath();
     ctx.ellipse(L.cx, y + (front ? 1.2 * u : 0), L.rx, L.ry, 0, a0, a1);
     ctx.lineWidth = lw + 2 * u;
@@ -1644,8 +1707,8 @@
 
     // paper thickness + soft drop shadow
     ctx.save();
-    ctx.shadowColor = C.shadow;
-    ctx.shadowBlur = (8 + 22 * lift) * u;
+    ctx.shadowColor = wt.code ? wt.code + (C.dark ? "88" : "55") : C.shadow;
+    ctx.shadowBlur = (wt.code ? 14 : 8) * u + 22 * lift * u;
     ctx.shadowOffsetY = (3 + 12 * lift) * u;
     ctx.translate(0, wt.edge * u); // thicker paper stack for heavier files
     body();
@@ -1944,8 +2007,9 @@
       for (let i = 0; i < f.trail.length - 1; i++) {
         const p = f.trail[i];
         const t = i / f.trail.length;
-        ctx.globalAlpha = t * 0.18 * f.alpha;
-        ctx.fillStyle = f.color;
+        ctx.globalAlpha = t * 0.22 * f.alpha;
+        ctx.globalCompositeOperation = C.dark ? "lighter" : "source-over";
+        ctx.fillStyle = W_(f).code || f.color;
         ctx.beginPath();
         ctx.arc(p.x, p.y, L.cardW * 0.28 * scale * t, 0, Math.PI * 2);
         ctx.fill();
@@ -1964,7 +2028,7 @@
 
     let timer;
     if (f.deadline !== undefined) {
-      timer = clamp((f.deadline - time) / DEADLINE, 0, 1);
+      timer = clamp((f.deadline - time) / (f.ttl || DEADLINE), 0, 1);
       if (timer < 0.3 && !reduceMotion) { // jitter when it's about to expire
         x += Math.sin(time * 50 + f.ox) * 1.6 * u;
         rot += Math.sin(time * 37 + f.ox) * 0.03;
@@ -2012,6 +2076,21 @@
   }
 
   function drawEffects() {
+    if (rimGlow > 0) {
+      // a warm flash of light at the hoop after a basket
+      ctx.save();
+      ctx.globalCompositeOperation = "lighter";
+      const r = (60 + 90 * (1 - rimGlow)) * u;
+      const g = ctx.createRadialGradient(L.cx, L.rimY, 0, L.cx, L.rimY, r);
+      g.addColorStop(0, `rgba(255,170,90,${0.55 * rimGlow})`);
+      g.addColorStop(1, "rgba(255,120,40,0)");
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.arc(L.cx, L.rimY, r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+
     for (const r of rings) {
       const t = r.t / r.life;
       ctx.save();
@@ -2035,7 +2114,8 @@
         ctx.translate(p.x, p.y);
         ctx.rotate(p.rot);
         ctx.scale(1, Math.cos(p.rot * 1.7)); // flutter
-        ctx.fillRect(-p.w / 2, -p.h / 2, p.w, p.h);
+        if (p.dot) { ctx.beginPath(); ctx.arc(0, 0, p.h * 0.7, 0, Math.PI * 2); ctx.fill(); }
+        else ctx.fillRect(-p.w / 2, -p.h / 2, p.w, p.h);
       } else {
         ctx.beginPath();
         ctx.arc(p.x, p.y, p.r * (1 - t), 0, Math.PI * 2);
@@ -2051,11 +2131,21 @@
       ctx.globalAlpha = t > 0.7 ? 1 - (t - 0.7) / 0.3 : 1;
       ctx.translate(tx.x, tx.y - t * 34 * u);
       ctx.scale(pop, pop);
-      ctx.font = `${tx.weight} ${tx.size}px Inter, system-ui, sans-serif`;
+      ctx.font = `${tx.weight} ${tx.size}px Sora, Inter, system-ui, sans-serif`;
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
-      ctx.shadowColor = C.dark ? "rgba(0,0,0,0.6)" : "rgba(255,255,255,0.9)";
-      ctx.shadowBlur = 10;
+      if (tx.glow) {
+        // big score pops: white outline plus a coloured glow
+        ctx.shadowColor = tx.color;
+        ctx.shadowBlur = 24;
+        ctx.lineJoin = "round";
+        ctx.lineWidth = Math.max(3, tx.size * 0.12);
+        ctx.strokeStyle = C.dark ? "rgba(10,12,16,0.9)" : "#ffffff";
+        ctx.strokeText(tx.text, 0, 0);
+      } else {
+        ctx.shadowColor = C.dark ? "rgba(0,0,0,0.6)" : "rgba(255,255,255,0.9)";
+        ctx.shadowBlur = 10;
+      }
       ctx.fillStyle = tx.color;
       ctx.fillText(tx.text, 0, 0);
       ctx.restore();
@@ -2232,14 +2322,14 @@
 
   // a tiny hook for automated checks
   window.__fileShot = {
-    get uploaded() { return uploaded; }, get missed() { return missed; }, get level() { return level; },
+    get uploaded() { return uploaded; }, get points() { return points; }, get streak() { return streak; }, get missed() { return missed; }, get level() { return level; },
     get over() { return over; }, get L() { return L; }, waiting, flying,
     get phase() { return phase; }, get mode() { return mode; }, get revives() { return revives; },
     get timeLeft() { return timeLeft; }, set timeLeft(v) { timeLeft = v; },
-    set streak(v) { streak = v; },
+    set streakValue(v) { streak = v; },
     setLevel: (n) => { level = n; levelUploads = 0; missRun = 0; clearBoard(); showIntro(); },
     beginLevel: () => beginLevel(),
-    testScore: () => onScore({ ...makeFakeFile(), rimHits: 0, banked: false }),
+    testScore: (weight) => onScore({ ...makeFakeFile(), weight: weight || (LV().weights ? "medium" : "plain"), rimHits: 0, banked: false }),
     testMiss: () => registerMiss("Missed", L.cx, L.rimY + L.netH),
   };
 

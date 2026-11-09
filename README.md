@@ -19,12 +19,14 @@ A browser game that turns a file upload screen into basketball. Drag a file card
 - **Classic:** five levels, each adding one new rule, with a short briefing before each level.
   1. **Warm-up:** one file at a time.
   2. **Rush hour:** several files on the floor at once.
-  3. **Heavy lifting:** files get weight, colour coded. Blue (light, under 1 MB) needs a short pull, yellow (normal) throws as usual, red (heavy, 10 MB and up) needs a long pull.
-  4. **Deadline:** every file has 8 seconds before it expires. From here, miss 6 in a row and the game is over.
+  3. **Heavy lifting:** files get weight, colour coded, and heavier files score more. Blue (light, under 1 MB) is 1 point with a short pull, yellow (normal) is 2 points, red (heavy, 10 MB and up) is 3 points with a long pull. Light files are the most common, heavy the rarest.
+  4. **Deadline:** files expire if you don't upload them in time: light files get 10 seconds, normal 8, heavy 6. From here, miss 6 in a row and the game is over, and each level starts with a fresh streak.
   5. **Quarantine:** virus files appear. Touching one counts as a miss.
 
   Every 10 uploads in a row earns a **revive**. When you'd lose, you can choose to spend one and keep going.
-- **Timed run:** 60 seconds on one clock. Upload as many as you can; clean swishes add 2 seconds.
+- **Timed run:** 60 seconds on one clock. Score as many points as you can; clean swishes add 2 seconds.
+
+Your score is in points; best scores are saved on your device.
 
 **Built with** plain HTML, CSS and JavaScript on a single canvas. No libraries. Works on desktop and phone, can be installed like an app, and plays offline once loaded.
 

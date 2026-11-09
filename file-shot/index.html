@@ -8,7 +8,7 @@
 
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Sora:wght@600;700;800&display=swap" rel="stylesheet">
 
   <link rel="stylesheet" href="game.css">
 
@@ -37,6 +37,7 @@
 
     <div class="hud-right">
       <div class="pill" id="scorePill" aria-live="polite">
+        <div class="stat pts"><b id="points">0</b><span>Points</span></div>
         <div class="stat up"><b id="uploaded">0</b><span>Uploaded</span></div>
         <div class="stat miss"><b id="missed">0</b><span>Missed</span></div>
         <div class="stat rate"><b id="rate">–</b><span>Success</span></div>
@@ -101,7 +102,7 @@
           <ul>
             <li><b>Shoot:</b> drag a file toward the hoop. The further you pull, the harder you throw. Let go to shoot.</li>
             <li><b>Classic:</b> five levels, each adding one new rule. You'll get a short briefing before each one.</li>
-            <li><b>File weight:</b> <span class="tag light">LIGHT</span> needs a short pull, <span class="tag normal">NORMAL</span> throws as usual, <span class="tag heavy">HEAVY</span> needs a long pull.</li>
+            <li><b>File weight:</b> <span class="tag light">LIGHT</span> 1 pt, short pull. <span class="tag normal">NORMAL</span> 2 pts. <span class="tag heavy">HEAVY</span> 3 pts, long pull.</li>
             <li><b>Losing:</b> from level 4, miss 6 in a row and the game ends. Don't touch virus files: that counts as a miss.</li>
             <li><b>Revives:</b> every 10 uploads in a row earns one. Use it to keep going when you'd otherwise lose.</li>
             <li><b>Timed run:</b> 60 seconds on one clock. Clean swishes add 2 seconds.</li>
@@ -166,13 +167,13 @@
     <div class="card over-card" role="dialog" aria-modal="true" aria-labelledby="overVerdict">
       <p class="over-kicker" id="overKicker">Game over</p>
       <h2 class="verdict" id="overVerdict">Upload failed.</h2>
-      <p class="big-score"><span id="finalUploaded">0</span><small id="finalUnit">files uploaded</small></p>
+      <p class="big-score"><span id="finalPoints">0</span><small id="finalUnit">points</small></p>
       <p class="best" id="finalBest">Best: 0</p>
       <dl class="final-stats">
+        <div><dt>Uploaded</dt><dd id="finalUploaded">0</dd></div>
         <div><dt>Missed</dt><dd id="finalMissed">0</dd></div>
         <div><dt>Success</dt><dd id="finalRate">–</dd></div>
         <div><dt>Best streak</dt><dd id="finalStreak">0</dd></div>
-        <div><dt>Time</dt><dd id="finalTime">0s</dd></div>
         <div><dt id="finalExtraLabel">Level</dt><dd id="finalExtra">1</dd></div>
         <div><dt id="finalLastLabel">Revives used</dt><dd id="finalLast">0</dd></div>
       </dl>
