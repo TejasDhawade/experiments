@@ -50,9 +50,21 @@
     2: { name: "Rush hour", toPass: 8 },
     3: { name: "Heavy lifting", toPass: 8, weights: true, mix: MIX_INTRO },
     4: { name: "Deadline", toPass: 8, weights: true, mix: MIX_LATER, deadline: true, lose: true, freshStreak: true },
-    5: { name: "Quarantine", weights: true, mix: MIX_LATER, deadline: true, lose: true, viruses: true, freshStreak: true },
+    5: { name: "Quarantine", toPass: 10, weights: true, mix: MIX_LATER, deadline: true, lose: true, viruses: true, freshStreak: true },
+    6: { name: "Bundles", toPass: 10, weights: true, mix: MIX_LATER, deadline: true, lose: true, viruses: true, freshStreak: true, bundles: true },
+    7: { name: "Server busy", toPass: 12, weights: true, mix: MIX_LATER, deadline: true, lose: true, viruses: true, freshStreak: true, bundles: true, moving: true },
+    8: { name: "Bad connection", toPass: 12, weights: true, mix: MIX_LATER, deadline: true, lose: true, viruses: true, freshStreak: true, bundles: true, moving: true, shortAim: true },
+    9: { name: "Low storage", toPass: 12, weights: true, mix: MIX_LATER, deadline: true, lose: true, viruses: true, freshStreak: true, bundles: true, moving: true, shortAim: true, smallRim: true },
+    // the finale: one clock and a points target; misses no longer end the game
+    10: { name: "Final upload", weights: true, mix: MIX_LATER, deadline: true, viruses: true, freshStreak: true, bundles: true, moving: true, shortAim: true, smallRim: true, finale: true },
   };
-  const LAST_LEVEL = 5;
+  const LAST_LEVEL = 10;
+  const FINALE_SECONDS = 90;
+  const FINALE_TARGET = 40;    // points to score in level 10 to finish the game
+  const VIRUS_PENALTY = 3;     // seconds lost for touching a virus in the finale
+  const BUNDLE_CHANCE = 0.18;  // chance a new file is a bundle (levels 6+)
+  const SMALL_RIM = 0.78;      // rim size in levels 9-10
+  const AIM_VISIBLE = 0.35;    // share of the aim line shown in levels 8-10
   const DEADLINE = 8;          // seconds per plain file (weighted files use WEIGHTS[].ttl)
   const MAX_MISS_RUN = 5;      // the 6th miss in a row ends the game
   const VIRUS_LIFE = 7;        // seconds a virus sits on the floor before vanishing
@@ -71,9 +83,11 @@
   const WEIGHTS = {
     // points per upload, and seconds on the floor when files are timed
     plain:  { pull: 1,    scale: 1,    edge: 2.5, label: "",       code: "",        points: 1, ttl: 8 },
-    light:  { pull: 0.7,  scale: 0.9,  edge: 1.6, label: "LIGHT",  code: "#2563eb", points: 1, ttl: 10 },
-    medium: { pull: 1,    scale: 1,    edge: 2.5, label: "NORMAL", code: "#eab308", points: 2, ttl: 8 },
-    heavy:  { pull: 1.38, scale: 1.12, edge: 5,   label: "HEAVY",  code: "#dc2626", points: 3, ttl: 6 },
+    light:  { pull: 0.7,  scale: 0.82, edge: 1.4, label: "LIGHT",  code: "#3a7bff", points: 1, ttl: 10 },
+    medium: { pull: 1,    scale: 1,    edge: 2.6, label: "NORMAL", code: "#f5c518", points: 2, ttl: 8 },
+    heavy:  { pull: 1.38, scale: 1.26, edge: 5.5, label: "HEAVY",  code: "#e8322b", points: 3, ttl: 6 },
+    // a stack of files: pulls and expires like a heavy file, scores the sum of its parts
+    bundle: { pull: 1.38, scale: 1.1,  edge: 5.5, label: "BUNDLE", code: "",        points: 0, ttl: 6 },
   };
   const weightOf = (bytes) => (bytes < LIGHT_MAX ? "light" : bytes >= HEAVY_MIN ? "heavy" : "medium");
   const W_ = (f) => WEIGHTS[f.weight] || WEIGHTS.plain;
@@ -125,6 +139,13 @@
   const lerp = (a, b, t) => a + (b - a) * t;
   const rand = (a, b) => a + Math.random() * (b - a);
   const pick = (arr) => arr[(Math.random() * arr.length) | 0];
+  // lighten (amt > 0) or darken (amt < 0) a #rrggbb colour
+  function shade(hex, amt) {
+    const n = parseInt(hex.slice(1), 16);
+    const ch = [(n >> 16) & 255, (n >> 8) & 255, n & 255].map((v) =>
+      Math.round(amt >= 0 ? v + (255 - v) * amt : v * (1 + amt)));
+    return `rgb(${ch.join(",")})`;
+  }
   const easeOutBack = (t) => { const c = 1.9; return 1 + (c + 1) * Math.pow(t - 1, 3) + c * Math.pow(t - 1, 2); };
 
   function rr(x, y, w, h, r) {
@@ -159,21 +180,30 @@
   function readColors() {
     const cs = getComputedStyle(document.documentElement);
     const g = (n) => cs.getPropertyValue(n).trim();
-    const t = document.documentElement.getAttribute("data-theme");
-    const dark = t ? t === "dark" : darkQuery.matches;
+    const dark = true; // the game has one look: dark
     C = {
       dark,
       bg: g("--bg"), bg2: g("--bg2"), surface: g("--surface"), text: g("--text"),
-      muted: g("--muted"), line: g("--line"), accent: g("--accent"), orange: g("--orange"),
-      paperA: dark ? "#2c313b" : "#ffffff",
-      paperB: dark ? "#232730" : "#f1f3f7",
-      paperEdge: dark ? "#14171c" : "#cfd5de",
-      paperLine: dark ? "#454c59" : "#dde2e9",
-      paperFold: dark ? "#3d4450" : "#e4e8ee",
-      paperBack: dark ? "#262a33" : "#e9edf2",
-      netFront: dark ? "rgba(205,212,224,0.75)" : "rgba(120,130,146,0.85)",
-      netBack: dark ? "rgba(160,170,186,0.32)" : "rgba(150,160,175,0.45)",
-      shadow: dark ? "rgba(0,0,0,0.55)" : "rgba(25,35,60,0.22)",
+      muted: g("--muted"), line: g("--line"), accent: g("--accent"), onAccent: g("--on-accent"),
+      danger: g("--bad"), good: g("--good"), virus: g("--virus"),
+      grid: dark ? "rgba(255,255,255,0.035)" : "rgba(17,17,17,0.03)",
+      gridMajor: dark ? "rgba(255,255,255,0.07)" : "rgba(17,17,17,0.06)",
+      floor: dark ? "#0a0b0c" : "#e2e1dc",
+      zone: dark ? "rgba(22,24,26,0.7)" : "rgba(246,245,241,0.75)",
+      // materials
+      glass: dark ? "rgba(46,50,54,0.72)" : "rgba(214,222,226,0.62)",
+      metalHi: dark ? "#6b7075" : "#c9cccf",
+      metalLo: dark ? "#3a3e42" : "#8d9296",
+      paint: dark ? "#e9e8e3" : "#151515",
+      rim: "#cf5a22", rimBack: "#b04a1a",
+      netCord: dark ? "#e6e5e0" : "#fbfbf8",
+      netShade: dark ? "rgba(0,0,0,0.7)" : "rgba(40,40,40,0.38)",
+      paper: dark ? "#202326" : "#fbfaf7",
+      paperBack: dark ? "#1a1c1f" : "#efeee9",
+      paperEdge: dark ? "#0b0c0d" : "#c9c7bf",
+      paperLine: dark ? "#3a3e43" : "#d6d4cc",
+      paperFold: dark ? "#2b2f33" : "#e8e6df",
+      shadow: dark ? "rgba(0,0,0,0.6)" : "rgba(20,20,20,0.18)",
     };
   }
   readColors();
@@ -213,6 +243,18 @@
     const mb = kind === "light" ? rand(0.02, 0.9) : kind === "medium" ? rand(1.2, 9.5) : rand(10.5, 48);
     const bytes = Math.round(mb * 1024 * 1024);
     return { name, ext, color: TYPE_COLORS[ext], bytes, weight: "plain", size: formatSize(bytes) };
+  }
+
+  // A stack of 2-3 files, e.g. light + normal + heavy = 6 points
+  function makeBundle() {
+    const parts = pick([["light", "medium", "heavy"], ["light", "medium", "heavy"], ["medium", "heavy"], ["light", "heavy"], ["light", "medium"]]);
+    const points = parts.reduce((sum, k) => sum + WEIGHTS[k].points, 0);
+    const mb = parts.reduce((sum, k) => sum + (k === "light" ? rand(0.1, 0.9) : k === "medium" ? rand(2, 9) : rand(11, 40)), 0);
+    const bytes = Math.round(mb * 1024 * 1024);
+    return {
+      name: `bundle_${String((Math.random() * 90 + 10) | 0)}`, ext: "ZIP", color: TYPE_COLORS.ZIP,
+      bytes, size: formatSize(bytes), weight: "bundle", parts, bundlePoints: points,
+    };
   }
 
   function makeVirusFile() {
@@ -299,6 +341,8 @@
       tick() { tone(1800, 1700, 0.04, "square", 0.025); },
       expire() { tone(420, 180, 0.28, "sawtooth", 0.06); noise(0.2, "lowpass", 1200, 200, 0.8, 0.08); },
       levelUp() { [523.25, 659.25, 783.99, 1046.5].forEach((f, i) => tone(f, f, 0.25, "triangle", 0.09, i * 0.09)); },
+      warn() { tone(880, 880, 0.12, "square", 0.04); tone(880, 880, 0.12, "square", 0.04, 0.3); tone(880, 880, 0.12, "square", 0.04, 0.6); },
+      win() { [523.25, 659.25, 783.99, 1046.5, 1318.5].forEach((f, i) => tone(f, f, 0.35, "triangle", 0.1, i * 0.11)); },
       glitch() { tone(220, 180, 0.08, "square", 0.03); tone(330, 140, 0.12, "sawtooth", 0.025, 0.06); },
       infect() { tone(140, 60, 0.4, "sawtooth", 0.12); noise(0.35, "bandpass", 300, 2400, 3, 0.12); tone(90, 70, 0.3, "square", 0.06, 0.05); },
       revive() { [392, 523.25, 783.99].forEach((f, i) => tone(f, f * 1.01, 0.3, "sine", 0.1, i * 0.07)); noise(0.4, "bandpass", 800, 4000, 0.7, 0.08); },
@@ -335,7 +379,8 @@
     L.cx = W / 2;
 
     // hoop
-    L.rx = 66 * u;          // rim half-width (to tube centre)
+    L.rxBase = 66 * u;      // rim half-width (to tube centre)
+    L.rx = L.rxBase * rimScale;
     L.ry = L.rx * 0.24;     // rim perspective squash
     L.tube = 4.2 * u;       // rim thickness radius
     L.netH = 92 * u;
@@ -354,10 +399,12 @@
     // drop zone card around the board
     const dzW = Math.min(W - 32, L.bw + 190 * u);
     L.dz = { x: L.cx - dzW / 2, y: L.by - dzAbove, w: dzW, h: L.rimY + 4 * u - (L.by - dzAbove) };
+    L.hoopRange = Math.max(0, Math.min((dzW - L.bw) / 2 - 6 * u, 170 * u));
+    placeHoop();
 
     // files
-    L.cardW = 60 * u;
-    L.cardH = 76 * u;
+    L.cardW = 64 * u;
+    L.cardH = 82 * u;
     L.fr = 17 * u;          // collision radius at hoop depth
     L.floorY = H - Math.max(48 * u, 40);
     L.g = 1750 * u;
@@ -366,6 +413,48 @@
     L.capacity = clamp(Math.floor((W - 2 * L.margin) / (L.cardW * 1.75)) + 1, 2, 5);
 
     buildNet();
+  }
+
+  // The hoop unit (drop zone, backboard, rim, net) can slide sideways in levels 7+
+  let hoopShift = 0, rimScale = 1;
+  function placeHoop() {
+    L.hx = L.cx + hoopShift;
+    L.bx = L.hx - L.bw / 2;
+  }
+
+  function applyLevelGeometry() {
+    rimScale = mode === "classic" && LEVELS[level].smallRim ? SMALL_RIM : 1;
+    L.rx = L.rxBase * rimScale;
+    L.ry = L.rx * 0.24;
+    hoopShift = 0;
+    hoopPhase = "idle";
+    hoopPhaseAt = time + rand(3, 5);
+    placeHoop();
+  }
+
+  // levels 7+: warn with amber flashes, slide left and right for a moment, then come to rest
+  // on the left, on the right or in the centre (never the same spot twice in a row)
+  function updateHoop(dt) {
+    if (phase !== "playing" || !LV().moving) {
+      if (hoopShift !== 0) { hoopShift = Math.abs(hoopShift) < 0.5 ? 0 : hoopShift * (1 - 6 * dt); placeHoop(); }
+      return;
+    }
+    if (hoopPhase === "idle" && time >= hoopPhaseAt) {
+      hoopPhase = "warn"; hoopPhaseAt = time + 0.9; sfx.warn();
+    } else if (hoopPhase === "warn" && time >= hoopPhaseAt) {
+      hoopPhase = "move"; hoopPhaseAt = time + 1.8;
+      const spots = [-0.8, 0, 0.8].map((k) => k * L.hoopRange).filter((x) => Math.abs(x - hoopShift) > 1);
+      hoopFrom = hoopShift;
+      hoopTo = pick(spots);
+      hoopAmp = L.hoopRange * rand(0.35, 0.6) * (Math.random() < 0.5 ? -1 : 1);
+    } else if (hoopPhase === "move") {
+      const t = clamp(1 - (hoopPhaseAt - time) / 1.8, 0, 1);
+      const ease = t * t * (3 - 2 * t);
+      // travel to the new spot with a side-to-side wobble that dies out as it arrives
+      hoopShift = clamp(lerp(hoopFrom, hoopTo, ease) + hoopAmp * Math.sin(Math.PI * 2 * t) * (1 - t), -L.hoopRange, L.hoopRange);
+      if (t >= 1) { hoopShift = hoopTo; hoopPhase = "idle"; hoopPhaseAt = time + rand(4, 6.5); }
+    }
+    placeHoop();
   }
 
   // ---------- Game state ----------
@@ -381,6 +470,10 @@
   let timeLeft = TIMED_SECONDS, timeBonus = 0;
   let demoAt = 1.2;          // next attract-mode throw on the start screen
   let nextVirusAt = 0;
+  let levelPoints = 0;       // points scored in the current level (the finale target)
+  let won = false;
+  // moving hoop: idle -> warn (amber flashes) -> move -> idle
+  let hoopPhase = "idle", hoopPhaseAt = 0, hoopAmp = 0, hoopFrom = 0, hoopTo = 0;
   let levelupAt = 0;         // when the "level complete" pause hands over to the next briefing
 
   const waiting = [];       // files sitting on the floor, ready to throw
@@ -433,7 +526,7 @@
     const t = n.r / (NET_R - 1);
     const f = 1 - 0.45 * t;
     return {
-      x: L.cx + L.rx * f * Math.cos(n.th) + n.dx,
+      x: L.hx + L.rx * f * Math.cos(n.th) + n.dx,
       y: L.rimY + L.ry * f * Math.sin(n.th) + L.netH * t + n.dy + (n.r === 0 ? rimDy : rimDy * (1 - t)),
     };
   }
@@ -459,7 +552,7 @@
   }
 
   function pushNet(f) {
-    if (Math.abs(f.x - L.cx) > L.rx + L.fr * 2) return;
+    if (Math.abs(f.x - L.hx) > L.rx + L.fr * 2) return;
     if (f.y < L.rimY - L.fr || f.y > L.rimY + L.netH + L.fr) return;
     const R = L.fr * 1.2;
     for (const n of net) {
@@ -498,9 +591,11 @@
     return bestX;
   }
 
-  function spawn(virus = false) {
-    const info = virus ? makeVirusFile() : queue.length ? queue.shift() : makeFakeFile(LV().mix);
-    if (!virus && LV().weights) info.weight = weightOf(info.bytes);
+  function spawn(virus = false, forceBundle = false) {
+    const wantBundle = forceBundle || (!virus && !queue.length && LV().bundles && Math.random() < BUNDLE_CHANCE && !waiting.some((w) => w.bundle));
+    const info = virus ? makeVirusFile() : wantBundle ? makeBundle() : queue.length ? queue.shift() : makeFakeFile(LV().mix);
+    if (wantBundle) info.bundle = true;
+    else if (!virus && LV().weights) info.weight = weightOf(info.bytes);
     const x = clamp(pickSpawnX(), L.margin, W - L.margin);
     const y = restY(info);
     const f = { ...info, ox: x, oy: y, x, y, rot: 0, state: "spawning", t: 0, born: time };
@@ -514,10 +609,14 @@
   function infect(f) {
     waiting.splice(waiting.indexOf(f), 1);
     poofs.push({ f, x: f.x, y: f.y, rot: f.rot, t: 0, quiet: true });
-    sparks(f.x, f.y, 22, "#22c55e");
+    sparks(f.x, f.y, 12, C.virus);
     rings.push({ x: f.x, y: f.y, t: 0, life: 0.5, virus: true });
     sfx.infect();
     shake(6);
+    if (LV().finale) {
+      timeLeft = Math.max(0, timeLeft - VIRUS_PENALTY);
+      floatText(`-${VIRUS_PENALTY}s`, f.x, f.y - L.cardH * 1.4, { size: 22 * u, color: C.danger, weight: 800, life: 1.2 });
+    }
     registerMiss("Infected!", f.x, f.y - L.cardH * 0.9);
   }
 
@@ -591,7 +690,7 @@
     const x0 = clamp(L.cx + side * rand(W * 0.18, W * 0.36), L.margin, W - L.margin);
     const y0 = restY(info);
     const T = rand(1.0, 1.12);
-    const tx = L.cx + rand(-0.25, 0.25) * L.rx, ty = L.rimY;
+    const tx = L.hx + rand(-0.25, 0.25) * L.rx, ty = L.rimY;
     const vx = (tx - x0) / T;
     const vy = (ty - y0 - 0.5 * L.g * T * T) / T;
     flying.push(makeFlying({ ...info, x: x0, y: y0, rot: 0, demo: true }, vx, vy));
@@ -602,25 +701,24 @@
     if (i >= 0) waiting.splice(i, 1);
     if (held === f) { held = null; drag = null; canvas.style.cursor = "default"; }
     poofs.push({ f, x: f.x, y: f.y, rot: f.rot, t: 0 });
-    sparks(f.x, f.y, 14, "#ef4444");
+    sparks(f.x, f.y, 8, C.text);
     sfx.expire();
     nextSpawnAt = Math.max(nextSpawnAt, time + 0.5);
     registerMiss("Expired", f.x, f.y - L.cardH * 0.9);
   }
 
   // ---------- Effects ----------
-  const CONFETTI = ["#f26b1d", "#2a6fe8", "#22c55e", "#eab308", "#ec4899", "#8b5cf6"];
-
-  function confetti(x, y, n) {
-    if (reduceMotion) n = Math.round(n * 0.3);
+  // a few small, hard-edged flecks: mostly ink, with the weight colour if there is one
+  function confetti(x, y, n, tint) {
+    n = Math.round(n * (reduceMotion ? 0.1 : 0.25));
     for (let i = 0; i < n; i++) {
       const a = rand(-Math.PI * 0.95, -Math.PI * 0.05);
       const s = rand(250, 750) * u;
       particles.push({
         x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s,
         rot: rand(0, 6.28), vr: rand(-12, 12),
-        w: rand(5, 10) * u, h: rand(3, 6) * u,
-        color: pick(CONFETTI), life: rand(1.1, 1.8), t: 0, kind: "confetti", dot: Math.random() < 0.3,
+        w: rand(3, 5) * u, h: rand(1.5, 2.5) * u,
+        color: tint && Math.random() < 0.5 ? tint : C.text, life: rand(0.7, 1.1), t: 0, kind: "confetti",
       });
     }
   }
@@ -637,7 +735,7 @@
   }
 
   function shake(amount) {
-    if (!reduceMotion) camShake = Math.max(camShake, amount);
+    if (!reduceMotion) camShake = Math.max(camShake, amount * 0.3);
   }
 
   // ---------- HUD ----------
@@ -662,11 +760,12 @@
     const r = successRate();
     rateEl.textContent = r === null ? "–" : r + "%";
     const timed = mode === "timed";
+    const finale = !timed && !!LEVELS[level].finale;
     const lose = !timed && !!LEVELS[level].lose;
-    const hasBar = timed || !!LEVELS[level].toPass;
-    levelNameEl.textContent = timed ? `Timed run · ${fmtClock(Math.ceil(timeLeft))}` : `Level ${level} · ${LEVELS[level].name}`;
+    const hasBar = timed || finale || !!LEVELS[level].toPass;
+    levelNameEl.textContent = levelLabel();
     levelBarEl.hidden = !hasBar || lose;
-    levelBarEl.classList.toggle("clock", timed);
+    levelBarEl.classList.toggle("clock", timed || finale);
     pipsEl.hidden = !lose;
     if (lose) {
       pipsEl.querySelectorAll("i").forEach((p, i) => p.classList.toggle("on", i < missRun));
@@ -676,11 +775,18 @@
     revivesCountEl.textContent = revives;
   }
 
+  function levelLabel() {
+    if (mode === "timed") return `Timed run · ${fmtClock(Math.ceil(timeLeft))}`;
+    if (LEVELS[level].finale) return `Level 10 · ${Math.min(levelPoints, FINALE_TARGET)}/${FINALE_TARGET} pts · ${fmtClock(Math.ceil(timeLeft))}`;
+    return `Level ${level} · ${LEVELS[level].name}`;
+  }
+
   function updateLevelBar() {
-    if (mode === "timed") {
-      const frac = clamp(timeLeft / TIMED_SECONDS, 0, 1);
+    const finale = mode === "classic" && LEVELS[level].finale;
+    if (mode === "timed" || finale) {
+      const frac = clamp(timeLeft / (finale ? FINALE_SECONDS : TIMED_SECONDS), 0, 1);
       levelFillEl.style.width = `${frac * 100}%`;
-      levelNameEl.textContent = `Timed run · ${fmtClock(Math.ceil(timeLeft))}`;
+      levelNameEl.textContent = levelLabel();
       levelBarEl.classList.toggle("low", timeLeft <= 10);
       return;
     }
@@ -697,21 +803,21 @@
   const INTROS = {
     1: {
       rules: [
-        ["🎯", "Drag a file toward the hoop. The further you pull, the harder you throw."],
-        ["🏀", "Let go to shoot. Through the rim counts as uploaded."],
+        ["AIM", "Drag a file toward the hoop. The further you pull, the harder you throw."],
+        ["SHOT", "Let go to shoot. Through the rim counts as uploaded."],
       ],
       goal: "Upload 3 files to move on",
     },
     2: {
       rules: [
-        ["📚", "Several files land on the floor at once."],
-        ["⚡", "Shoot them in any order, as fast as you can."],
+        ["MULTI", "Several files land on the floor at once."],
+        ["ANY", "Shoot them in any order, as fast as you can."],
       ],
       goal: "Upload 8 files to move on",
     },
     3: {
       rules: [
-        ["⚖️", "Files now have weight, shown by their colour. Heavier files score more."],
+        ["MASS", "Files now have weight, shown by their colour. Heavier files score more."],
         [W_TAG("light"), "1 point. Short pull. The most common."],
         [W_TAG("medium"), "2 points. Throws like before."],
         [W_TAG("heavy"), "3 points. Pull much further. The rarest."],
@@ -720,36 +826,76 @@
     },
     4: {
       rules: [
-        ["⏱️", "Files are timed. A dark ring around each one runs down and blinks near the end."],
+        ["TIMER", "Files are timed. A dark ring around each one runs down and blinks near the end."],
         [W_TAG("light"), "10 seconds"],
         [W_TAG("medium"), "8 seconds"],
         [W_TAG("heavy"), "6 seconds. Big points, little time."],
-        ["💥", "Files that run out of time count as missed."],
-        ["⚠️", "Miss 6 in a row and the game ends."],
-        ["💚", "Every 10 uploads in a row earns a revive. Your streak starts again from zero here."],
+        ["MISS", "Files that run out of time count as missed."],
+        ["RISK", "Miss 6 in a row and the game ends."],
+        ["REVIVE", "Every 10 uploads in a row earns a revive. Your streak starts again from zero here."],
       ],
       goal: "Upload 8 files to move on",
     },
     5: {
       rules: [
-        ["🦠", "Virus files sneak onto the floor. Don't touch them."],
-        ["❌", "Touching a virus counts as a miss. They disappear on their own."],
-        ["⏱️", "Deadlines, weights and the 6-misses rule still apply. Your streak starts again from zero."],
+        ["THREAT", "Virus files sneak onto the floor. Don't touch them."],
+        ["MISS", "Touching a virus counts as a miss. They disappear on their own."],
+        ["RULES", "Deadlines, weights and the 6-misses rule still apply. Your streak starts again from zero."],
       ],
-      goal: "Final level. Survive as long as you can",
+      goal: "Upload 10 files to move on",
+    },
+    6: {
+      rules: [
+        ["STACK", "Rare bundles of 2 or 3 files appear, fanned in a stack."],
+        ["SCORE", "A bundle scores all its files at once, e.g. light + normal + heavy = 6 points."],
+        ["RISK", "It needs a heavy pull and expires on the heavy timer. Missing it costs one miss."],
+      ],
+      goal: "Upload 10 files to move on",
+    },
+    7: {
+      rules: [
+        ["MOVE", "Every few seconds the hoop slides left and right, then settles back."],
+        ["WARN", "The rim and the lamp on the backboard flash amber just before it moves."],
+        ["TIP", "Wait for it to settle, or time your shot."],
+      ],
+      goal: "Upload 12 files to move on",
+    },
+    8: {
+      rules: [
+        ["SIGNAL", "The aim line only shows the start of the arc."],
+        ["FEEL", "Judge the rest of the throw yourself. Pull distance still sets the power."],
+      ],
+      goal: "Upload 12 files to move on",
+    },
+    9: {
+      rules: [
+        ["SPACE", "The rim shrinks, so only clean shots go in."],
+        ["BONUS", "Swishes score 1 extra point."],
+      ],
+      goal: "Upload 12 files to move on",
+    },
+    10: {
+      rules: [
+        ["CLOCK", `One ${FINALE_SECONDS}-second clock. Score ${FINALE_TARGET} points before it runs out to finish the game.`],
+        ["ALL", "Every rule is on: weights, bundles, deadlines, viruses, moving hoop, short aim line and small rim."],
+        ["BONUS", `Swishes add ${SWISH_BONUS} seconds. Touching a virus takes ${VIRUS_PENALTY} seconds away.`],
+        ["SAFE", "Misses no longer end the game. Only the clock does."],
+      ],
+      goal: `Score ${FINALE_TARGET} points in ${FINALE_SECONDS} seconds`,
     },
     timed: {
       rules: [
-        ["⏱️", `One clock: ${TIMED_SECONDS} seconds. Upload as many files as you can.`],
-        ["✨", `Clean swishes add ${SWISH_BONUS} seconds.`],
-        ["⚖️", "Files have weight: blue is light (1 pt), yellow is normal (2 pts), red is heavy (3 pts)."],
-        ["👍", "Misses don't end the run, they just waste time."],
+        ["CLOCK", `One clock: ${TIMED_SECONDS} seconds. Upload as many files as you can.`],
+        ["BONUS", `Clean swishes add ${SWISH_BONUS} seconds.`],
+        ["MASS", "Files have weight: blue is light (1 pt), yellow is normal (2 pts), red is heavy (3 pts)."],
+        ["MISS", "Misses don't end the run, they just waste time."],
       ],
       goal: "Beat your best timed score",
     },
   };
 
   function showIntro() {
+    applyLevelGeometry();
     const key = mode === "timed" ? "timed" : level;
     const info = INTROS[key];
     $("introKicker").textContent = mode === "timed" ? "Timed run" : `Level ${level} of ${LAST_LEVEL}`;
@@ -767,7 +913,7 @@
       list.appendChild(li);
     }
     $("introGoal").textContent = info.goal;
-    $("introStart").textContent = mode === "timed" ? "Start run" : level === 1 ? "Start level" : `Start level ${level}`;
+    $("introStart").textContent = mode === "timed" ? "Start run" : level === 1 ? "Start level" : LEVELS[level].finale ? "Start the final upload" : `Start level ${level}`;
     phase = "intro";
     updateHud();
     updateLevelBar();
@@ -782,6 +928,9 @@
     missRun = 0;
     // from level 4 on, every level starts with a fresh streak
     if (mode === "classic" && LEVELS[level].freshStreak) streak = 0;
+    levelPoints = 0;
+    if (mode === "classic" && LEVELS[level].finale) timeLeft = FINALE_SECONDS;
+    applyLevelGeometry();
     nextSpawnAt = time + 0.4;
     nextVirusAt = time + 2.5;
     phase = "playing";
@@ -796,7 +945,7 @@
     levelupAt = time + 1.4;
     if (held) { held = null; drag = null; canvas.style.cursor = "default"; }
     for (const f of waiting.splice(0)) poofs.push({ f, x: f.x, y: f.y, rot: f.rot, t: 0, quiet: true });
-    floatText("Level complete!", L.cx, L.rimY + L.netH + 40 * u, { size: 24 * u, color: C.orange, weight: 800, life: 1.6 });
+    floatText("Level complete", L.cx, L.rimY + L.netH + 40 * u, { size: 24 * u, color: C.text, weight: 800, life: 1.6 });
     confetti(L.cx, L.rimY + L.netH, 50);
     sfx.levelUp();
     updateLevelBar();
@@ -817,38 +966,40 @@
 
     // attract-mode throws on the start screen: just the swish, no score
     if (f.demo || (phase !== "playing" && phase !== "levelup")) {
-      rings.push({ x: L.cx, y: L.rimY, t: 0, life: 0.6 });
+      rings.push({ x: L.hx, y: L.rimY, t: 0, life: 0.6 });
       for (const n of net) if (n.r > 0) n.vy += 220 * u * (n.r / NET_R);
-      confetti(L.cx, L.rimY, 18);
+      confetti(L.hx, L.rimY, 18);
       return;
     }
 
-    const pts = W_(f).points;
+    let pts = f.bundlePoints || W_(f).points;
+    if (clean && LV().smallRim) pts += 1; // low storage: swishes earn a bonus point
     uploaded++;
     points += pts;
+    levelPoints += pts;
     levelUploads++;
     streak++;
     bestStreak = Math.max(bestStreak, streak);
     missRun = 0;
 
     if (clean) swishes++;
-    const label = f.banked ? "Bank shot!" : clean ? "Swish!" : pick(["Nice!", "Rattled in!", "Got it!"]);
-    floatText(`+${pts}`, L.cx, L.rimY - 30 * u, { size: (36 + pts * 6) * u, color: W_(f).code || C.orange, life: 1.2, glow: true });
-    floatText(label, L.cx, L.rimY - 74 * u, { size: 22 * u, color: C.text, weight: 700, life: 1.2 });
-    if (streak >= 3) floatText(`🔥 ${streak} in a row`, L.cx, L.rimY + L.netH + 34 * u, { size: 17 * u, color: C.orange, weight: 700, life: 1.5 });
+    const label = f.bundle ? "Bundle uploaded" : f.banked ? "Bank shot!" : clean ? (LV().smallRim ? "Swish +1" : "Swish!") : pick(["Nice!", "Rattled in!", "Got it!"]);
+    floatText(`+${pts}`, L.hx, L.rimY - 30 * u, { size: (34 + pts * 5) * u, color: W_(f).code || C.accent, life: 1.1 });
+    floatText(label, L.hx, L.rimY - 74 * u, { size: 22 * u, color: C.text, weight: 700, life: 1.2 });
+    if (streak >= 3) floatText(`Streak ×${streak}`, L.cx, L.rimY + L.netH + 34 * u, { size: 17 * u, color: C.text, weight: 700, life: 1.4 });
 
-    // timed run: clean swishes buy a little more time
-    if (mode === "timed" && clean) {
+    // timed run and the finale: clean swishes buy a little more time
+    if ((mode === "timed" || LV().finale) && clean) {
       timeLeft += SWISH_BONUS;
       timeBonus += SWISH_BONUS;
-      floatText(`+${SWISH_BONUS}s`, L.cx + L.rx + 34 * u, L.rimY - 40 * u, { size: 22 * u, color: "#16a34a", weight: 800, life: 1.2 });
+      floatText(`+${SWISH_BONUS}s`, L.hx + L.rx + 34 * u, L.rimY - 40 * u, { size: 22 * u, color: C.text, weight: 800, life: 1.2 });
       sfx.bonus();
     }
 
     // classic: every 10 in a row earns a revive
     if (mode === "classic" && streak % REVIVE_EVERY === 0) {
       revives++;
-      floatText("+1 revive", L.cx, L.rimY + L.netH + 60 * u, { size: 20 * u, color: "#16a34a", weight: 800, life: 1.8 });
+      floatText("Revive earned", L.cx, L.rimY + L.netH + 60 * u, { size: 20 * u, color: C.good, weight: 800, life: 1.8 });
       sfx.earn();
       setTimeout(() => bump(revivesEl), 0);
     }
@@ -856,9 +1007,9 @@
     updateHud();
     bump(scorePill.querySelector(".stat.pts"));
 
-    confetti(L.cx, L.rimY, clean ? 70 : 45);
+    confetti(L.hx, L.rimY, clean ? 60 : 40, W_(f).code || C.accent);
     rimGlow = 1;
-    rings.push({ x: L.cx, y: L.rimY, t: 0, life: 0.6 });
+    rings.push({ x: L.hx, y: L.rimY, t: 0, life: 0.6 });
     for (const n of net) if (n.r > 0) n.vy += 220 * u * (n.r / NET_R);
     shake(clean ? 5 : 3);
     sfx.swish();
@@ -867,6 +1018,7 @@
 
     const cfg = LEVELS[level];
     if (mode === "classic" && phase === "playing" && cfg.toPass && levelUploads >= cfg.toPass) completeLevel();
+    if (mode === "classic" && phase === "playing" && cfg.finale && levelPoints >= FINALE_TARGET) winGame();
   }
 
   function onMiss(f) {
@@ -883,7 +1035,7 @@
     if (phase !== "playing" && phase !== "levelup") return;
     missed++;
     streak = 0;
-    floatText(msg, x, y, { size: 16 * u, color: msg === "Expired" ? "#ef4444" : C.muted, weight: 700, life: 1.1 });
+    floatText(msg, x, y, { size: 16 * u, color: msg === "Expired" || msg === "Infected!" ? C.danger : C.muted, weight: 700, life: 1.1 });
     if (mode === "classic" && LEVELS[level].lose) {
       missRun++;
       if (missRun > MAX_MISS_RUN) {
@@ -894,7 +1046,7 @@
       } else if (missRun === MAX_MISS_RUN) {
         const extra = revives > 0 ? ` (${revives} revive${revives > 1 ? "s" : ""} left)` : "";
         floatText(revives > 0 ? `Revive ready${extra}` : "Last chance!", L.cx, L.rimY + L.netH + 60 * u,
-          { size: 20 * u, color: revives > 0 ? "#16a34a" : "#ef4444", weight: 800, life: 1.6 });
+          { size: 20 * u, color: revives > 0 ? C.good : C.danger, weight: 800, life: 1.6 });
       }
     }
     updateHud();
@@ -929,8 +1081,8 @@
     revives--;
     revivesUsed++;
     missRun = 0;
-    floatText("Revived!", L.cx, L.rimY - 60 * u, { size: 34 * u, color: "#16a34a", weight: 800, life: 1.6 });
-    rings.push({ x: L.cx, y: L.rimY, t: 0, life: 0.9, revive: true });
+    floatText("Revived", L.cx, L.rimY - 60 * u, { size: 34 * u, color: C.good, weight: 800, life: 1.6 });
+    rings.push({ x: L.hx, y: L.rimY, t: 0, life: 0.9, revive: true });
     confetti(L.cx, L.rimY + L.netH, 40);
     sfx.revive();
     shake(4);
@@ -979,6 +1131,7 @@
     const pts = `${points} point${points === 1 ? "" : "s"}`;
     const files = `${uploaded} file${uploaded === 1 ? "" : "s"}`;
     if (mode === "timed") return `I scored ${pts} (${files} uploaded) in a ${TIMED_SECONDS}-second timed run in File Shot 🏀 Can you beat me?`;
+    if (won) return `I finished all 10 levels of File Shot with ${pts} (${files} uploaded, ${r === null ? 0 : r}% success) 🏀 Can you beat me?`;
     return `I scored ${pts} (${files} uploaded, ${r === null ? 0 : r}% success) in File Shot 🏀 Can you beat me?`;
   }
 
@@ -1019,7 +1172,7 @@
     mode = m;
     clearBoard();
     uploaded = 0; missed = 0; streak = 0; bestStreak = 0; missRun = 0; points = 0;
-    revives = 0; revivesUsed = 0; swishes = 0;
+    revives = 0; revivesUsed = 0; swishes = 0; levelPoints = 0; won = false;
     level = 1; levelUploads = 0; levelStart = time; gameStart = time;
     timeLeft = TIMED_SECONDS; timeBonus = 0;
     over = false;
@@ -1042,6 +1195,8 @@
 
   function exitToMenu() {
     clearBoard();
+    level = 1;
+    applyLevelGeometry();
     phase = "menu";
     over = false;
     demoAt = time + 1;
@@ -1051,13 +1206,19 @@
     showScreen("menu");
   }
 
+  function winGame() {
+    won = true;
+    sfx.win();
+    confetti(L.hx, L.rimY, 120, C.accent);
+    endGame();
+  }
+
   function endGame() {
     over = true;
     phase = "over";
     if (held) { held = null; drag = null; canvas.style.cursor = "default"; }
     for (const f of waiting.splice(0)) poofs.push({ f, x: f.x, y: f.y, rot: f.rot, t: 0, quiet: true });
-    sfx.gameOver();
-    shake(6);
+    if (!won) { sfx.gameOver(); shake(6); }
 
     const timed = mode === "timed";
     const prevBest = timed ? bestTimed : best;
@@ -1070,8 +1231,8 @@
     const secs = Math.round(time - gameStart);
 
     const played = fmtClock(secs);
-    $("overKicker").textContent = `${timed ? "Time's up" : "Game over"} · ${played}`;
-    $("overVerdict").textContent = verdict();
+    $("overKicker").textContent = `${won ? "Upload complete" : timed || LEVELS[level].finale ? "Time's up" : "Game over"} · ${played}`;
+    $("overVerdict").textContent = won ? pick(["All files delivered.", "Zero data loss.", "Upload complete.", "Sync legend."]) : verdict();
     $("finalPoints").textContent = "0";
     $("finalPoints").dataset.target = points;
     $("finalUnit").textContent = points === 1 ? "point" : "points";
@@ -1182,7 +1343,7 @@
   // ---------- Physics ----------
   function rimCollide(f) {
     const min = L.fr + L.tube;
-    for (const ex of [L.cx - L.rx, L.cx + L.rx]) {
+    for (const ex of [L.hx - L.rx, L.hx + L.rx]) {
       const ey = L.rimY + rimDy;
       const dx = f.x - ex, dy = f.y - ey;
       const d2 = dx * dx + dy * dy;
@@ -1205,7 +1366,7 @@
           f.rimHits++;
           sfx.clank(clamp(-vn / (900 * u), 0, 1));
           rimV += clamp(-vn * 0.05, -60, 60) * (ny < 0 ? 1 : -1);
-          sparks(ex, ey, 6, C.orange);
+          sparks(ex, ey, 4, C.text);
         }
       }
       // never balance perfectly on top of the rim
@@ -1243,7 +1404,7 @@
     f.vy += L.g * dt;
     if (f.scored && f.y > L.rimY && f.y < L.rimY + L.netH) {
       // the net catches and centres the file
-      f.vx += (L.cx - f.x) * 9 * dt;
+      f.vx += (L.hx - f.x) * 9 * dt;
       f.vx *= 1 - 3 * dt;
       f.vy *= 1 - 2.4 * dt;
     }
@@ -1269,7 +1430,7 @@
     if (f.aboveRim && !f.behind) {
       rimCollide(f);
       if (!f.scored && prevY < L.rimY && f.y >= L.rimY &&
-          f.x > L.cx - L.rx + L.tube && f.x < L.cx + L.rx - L.tube) {
+          f.x > L.hx - L.rx + L.tube && f.x < L.hx + L.rx - L.tube) {
         onScore(f);
       }
       pushNet(f);
@@ -1342,10 +1503,11 @@
       demoAt = time + rand(1.8, 2.6);
     }
 
-    if (phase === "playing" && mode === "timed") {
+    if (phase === "playing" && (mode === "timed" || LV().finale)) {
       timeLeft -= dt;
       if (timeLeft <= 0) { timeLeft = 0; updateLevelBar(); endGame(); }
     }
+    updateHoop(dt);
 
     if (phase === "playing") {
       const cfg = LV();
@@ -1405,50 +1567,118 @@
   }
 
   // ---------- Drawing ----------
+  // Look: calm neutral base, technical type, realistic materials for the hoop.
+  // Colour is only used where it means something: file weight, viruses, danger.
+  const DISPLAY = '"Inter Tight", Inter, system-ui, sans-serif';
+  const MONO = '"JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace';
+
+  function cornerBrackets(x, y, w, h, len, color, lw) {
+    ctx.save();
+    ctx.strokeStyle = color;
+    ctx.lineWidth = lw;
+    ctx.lineCap = "square";
+    ctx.beginPath();
+    ctx.moveTo(x, y + len); ctx.lineTo(x, y); ctx.lineTo(x + len, y);
+    ctx.moveTo(x + w - len, y); ctx.lineTo(x + w, y); ctx.lineTo(x + w, y + len);
+    ctx.moveTo(x + w, y + h - len); ctx.lineTo(x + w, y + h); ctx.lineTo(x + w - len, y + h);
+    ctx.moveTo(x + len, y + h); ctx.lineTo(x, y + h); ctx.lineTo(x, y + h - len);
+    ctx.stroke();
+    ctx.restore();
+  }
+
   function drawBackground() {
     ctx.fillStyle = C.bg;
     ctx.fillRect(0, 0, W, H);
 
-    // two slow, soft colour lights drifting behind everything
-    const blobs = [
-      [0.18 + 0.06 * Math.sin(time * 0.13), 0.22 + 0.05 * Math.cos(time * 0.11), "242,107,29"],
-      [0.84 + 0.05 * Math.cos(time * 0.09), 0.7 + 0.06 * Math.sin(time * 0.12), "59,130,246"],
-    ];
-    for (const [bx, by, rgb] of blobs) {
-      const r = Math.max(W, H) * 0.55;
-      const bg = ctx.createRadialGradient(bx * W, by * H, 0, bx * W, by * H, r);
-      bg.addColorStop(0, `rgba(${rgb},${C.dark ? 0.16 : 0.1})`);
-      bg.addColorStop(1, `rgba(${rgb},0)`);
-      ctx.fillStyle = bg;
-      ctx.fillRect(0, 0, W, H);
+    // fine technical grid, fading out toward the floor
+    const step = Math.max(24, 32 * u);
+    ctx.save();
+    ctx.lineWidth = 1;
+    for (let gx = (L.cx % step); gx < W; gx += step) {
+      const major = Math.round((gx - L.cx) / step) % 4 === 0;
+      ctx.strokeStyle = major ? C.gridMajor : C.grid;
+      ctx.beginPath();
+      ctx.moveTo(Math.round(gx) + 0.5, 0);
+      ctx.lineTo(Math.round(gx) + 0.5, L.floorY);
+      ctx.stroke();
     }
+    for (let gy = (L.rimY % step); gy < L.floorY; gy += step) {
+      const major = Math.round((gy - L.rimY) / step) % 4 === 0;
+      ctx.strokeStyle = major ? C.gridMajor : C.grid;
+      ctx.beginPath();
+      ctx.moveTo(0, Math.round(gy) + 0.5);
+      ctx.lineTo(W, Math.round(gy) + 0.5);
+      ctx.stroke();
+    }
+    ctx.restore();
 
-    // soft spotlight on the hoop
-    const g = ctx.createRadialGradient(L.cx, L.rimY - L.bh * 0.4, 10, L.cx, L.rimY - L.bh * 0.4, Math.max(W, H) * 0.75);
-    g.addColorStop(0, C.dark ? "rgba(91,155,255,0.10)" : "rgba(255,255,255,0.95)");
-    g.addColorStop(1, "rgba(255,255,255,0)");
-    ctx.fillStyle = g;
+    // a warm overhead light falling on the hoop and the floor
+    const lx = L.cx, ly = L.by - 40 * u;
+    const light = ctx.createRadialGradient(lx, ly, 0, lx, ly, Math.max(W, H) * 0.75);
+    light.addColorStop(0, "rgba(255,150,80,0.10)");
+    light.addColorStop(0.4, "rgba(255,120,50,0.04)");
+    light.addColorStop(1, "rgba(0,0,0,0)");
+    ctx.fillStyle = light;
     ctx.fillRect(0, 0, W, H);
 
-    // floor: a faint plane with perspective lines toward the hoop
-    const fy = L.floorY;
-    const fg = ctx.createLinearGradient(0, fy - 70 * u, 0, H);
-    fg.addColorStop(0, "rgba(0,0,0,0)");
-    fg.addColorStop(1, C.dark ? "rgba(0,0,0,0.35)" : "rgba(30,45,80,0.07)");
-    ctx.fillStyle = fg;
-    ctx.fillRect(0, fy - 70 * u, W, H - fy + 70 * u);
+    // floor: a darker plane with an orange horizon line and a pool of light
+    const fy = L.floorY + 8 * u;
+    ctx.fillStyle = C.floor;
+    ctx.fillRect(0, fy, W, H - fy);
+    const pool = ctx.createRadialGradient(L.cx, fy, 0, L.cx, fy, W * 0.5);
+    pool.addColorStop(0, "rgba(255,140,70,0.08)");
+    pool.addColorStop(1, "rgba(255,140,70,0)");
+    ctx.fillStyle = pool;
+    ctx.fillRect(0, fy, W, H - fy);
+    // huge outlined level number painted on the back wall
+    ctx.save();
+    const big = mode === "timed" ? "60" : String(level).padStart(2, "0");
+    const bigSize = Math.min(H * 0.34, W * 0.3);
+    ctx.font = `800 ${bigSize}px ${DISPLAY}`;
+    ctx.textAlign = "left";
+    ctx.textBaseline = "alphabetic";
+    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = "rgba(255,106,26,0.14)";
+    ctx.strokeText(big, Math.max(16, W * 0.03), fy - 18 * u);
+    ctx.restore();
+
+    // hazard strip along the edge of the floor
+    ctx.save();
+    const sh = 6 * u;
+    ctx.beginPath();
+    ctx.rect(0, fy, W, sh);
+    ctx.clip();
+    ctx.fillStyle = "#14161a";
+    ctx.fillRect(0, fy, W, sh);
+    ctx.fillStyle = "rgba(255,106,26,0.85)";
+    for (let sx = -sh; sx < W + sh; sx += sh * 2.4) {
+      ctx.beginPath();
+      ctx.moveTo(sx, fy + sh);
+      ctx.lineTo(sx + sh, fy);
+      ctx.lineTo(sx + sh * 2.1, fy);
+      ctx.lineTo(sx + sh * 1.1, fy + sh);
+      ctx.closePath();
+      ctx.fill();
+    }
+    ctx.restore();
+
+    // a small stencilled label on the floor
+    ctx.save();
+    ctx.fillStyle = "rgba(139,142,148,0.7)";
+    ctx.font = `500 ${Math.max(8, 9 * u)}px ${MONO}`;
+    ctx.textAlign = "left";
+    ctx.textBaseline = "bottom";
+    const sector = mode === "timed" ? "TIMED RUN" : `SECTOR ${String(level).padStart(2, "0")}`;
+    ctx.fillText(`${sector} // UPLOAD BAY`, Math.max(16, W * 0.03), H - 8 * u);
+    ctx.restore();
 
     ctx.save();
-    ctx.strokeStyle = C.dark ? "rgba(255,255,255,0.05)" : "rgba(30,45,80,0.06)";
-    ctx.lineWidth = 1;
+    ctx.strokeStyle = C.grid;
     ctx.beginPath();
-    ctx.moveTo(0, fy + 8 * u);
-    ctx.lineTo(W, fy + 8 * u);
-    const vpY = L.rimY;
-    for (let k = -6; k <= 6; k++) {
-      const bx = L.cx + k * W * 0.14;
-      const t = (fy + 8 * u - vpY) / (H - vpY);
-      ctx.moveTo(lerp(L.cx, bx, t), fy + 8 * u);
+    for (let k = -8; k <= 8; k++) {
+      const bx = L.cx + k * W * 0.12;
+      const t = (fy - L.rimY) / (H - L.rimY);
+      ctx.moveTo(lerp(L.cx, bx, t), fy);
       ctx.lineTo(bx, H);
     }
     ctx.stroke();
@@ -1459,228 +1689,212 @@
     const d = L.dz;
     const active = !!held || osDrag;
     ctx.save();
-    ctx.shadowColor = C.dark ? "rgba(0,0,0,0.4)" : "rgba(30,45,80,0.06)";
-    ctx.shadowBlur = 30 * u;
-    ctx.shadowOffsetY = 10 * u;
-    rr(d.x, d.y, d.w, d.h, 22 * u);
-    ctx.fillStyle = C.dark ? "rgba(27,30,36,0.75)" : "rgba(255,255,255,0.72)";
-    ctx.fill();
-    ctx.restore();
-
-    if (active) {
-      rr(d.x, d.y, d.w, d.h, 22 * u);
-      ctx.fillStyle = C.dark ? "rgba(91,155,255,0.07)" : "rgba(42,111,232,0.05)";
-      ctx.fill();
-    }
-
-    ctx.save();
-    rr(d.x + 1, d.y + 1, d.w - 2, d.h - 2, 21 * u);
-    ctx.setLineDash([8 * u, 7 * u]);
-    ctx.lineDashOffset = active ? -time * 40 : 0;
-    ctx.lineWidth = active ? 2 : 1.6;
+    ctx.fillStyle = C.zone;
+    ctx.fillRect(d.x, d.y, d.w, d.h);
     ctx.strokeStyle = active ? C.accent : C.line;
-    ctx.stroke();
+    ctx.lineWidth = 1;
+    ctx.setLineDash(active ? [6, 4] : []);
+    ctx.lineDashOffset = active ? -time * 24 : 0;
+    ctx.strokeRect(Math.round(d.x) + 0.5, Math.round(d.y) + 0.5, Math.round(d.w) - 1, Math.round(d.h) - 1);
+    ctx.restore();
+    const inset = active ? 4 * u + Math.sin(time * 6) * 2 * u : 0;
+    cornerBrackets(d.x - 3 + inset, d.y - 3 + inset, d.w + 6 - inset * 2, d.h + 6 - inset * 2, 12 * u, C.accent, 2);
+
+    // small technical labels in the corners
+    ctx.save();
+    ctx.fillStyle = C.accent;
+    ctx.font = `500 ${Math.max(9, 10 * u)}px ${MONO}`;
+    ctx.textBaseline = "top";
+    ctx.textAlign = "left";
+    ctx.fillText(active ? "UPLINK // RECEIVING" : "UPLINK // READY", d.x + 12 * u, d.y + 10 * u);
+    ctx.fillStyle = C.muted;
+    ctx.textAlign = "right";
+    const lvl = mode === "timed" ? "TIMED" : `LV.${String(level).padStart(2, "0")}`;
+    ctx.fillText(lvl, d.x + d.w - 12 * u, d.y + 10 * u);
     ctx.restore();
 
-    // upload icon
-    const ix = L.cx, iy = d.y + 34 * u, s = 11 * u;
+    // upload glyph
+    const ix = L.cx, iy = d.y + 40 * u, s = 10 * u;
     ctx.save();
-    ctx.strokeStyle = active ? C.accent : C.text;
-    ctx.lineWidth = 2 * u;
-    ctx.lineCap = "round";
-    ctx.lineJoin = "round";
+    ctx.strokeStyle = C.text;
+    ctx.lineWidth = 1.6 * u;
+    ctx.lineCap = "square";
     const bob = active ? Math.sin(time * 8) * 2 * u : 0;
     ctx.beginPath();
-    ctx.moveTo(ix, iy + s * 0.5 + bob);
-    ctx.lineTo(ix, iy - s + bob);
-    ctx.moveTo(ix - s * 0.55, iy - s * 0.45 + bob);
-    ctx.lineTo(ix, iy - s + bob);
-    ctx.lineTo(ix + s * 0.55, iy - s * 0.45 + bob);
-    ctx.moveTo(ix - s, iy + s * 0.15);
-    ctx.lineTo(ix - s, iy + s * 0.85);
-    ctx.quadraticCurveTo(ix - s, iy + s * 1.1, ix - s * 0.75, iy + s * 1.1);
-    ctx.lineTo(ix + s * 0.75, iy + s * 1.1);
-    ctx.quadraticCurveTo(ix + s, iy + s * 1.1, ix + s, iy + s * 0.85);
-    ctx.lineTo(ix + s, iy + s * 0.15);
+    ctx.moveTo(ix, iy + s * 0.4 + bob); ctx.lineTo(ix, iy - s + bob);
+    ctx.moveTo(ix - s * 0.5, iy - s * 0.5 + bob); ctx.lineTo(ix, iy - s + bob); ctx.lineTo(ix + s * 0.5, iy - s * 0.5 + bob);
+    ctx.moveTo(ix - s, iy + s * 0.2); ctx.lineTo(ix - s, iy + s); ctx.lineTo(ix + s, iy + s); ctx.lineTo(ix + s, iy + s * 0.2);
     ctx.stroke();
     ctx.restore();
 
     ctx.textAlign = "center";
     ctx.textBaseline = "alphabetic";
     ctx.fillStyle = C.text;
-    ctx.font = `700 ${Math.max(16, 23 * u)}px Inter, system-ui, sans-serif`;
-    ctx.fillText(osDrag ? "Release to load the file" : "Drop files here", L.cx, d.y + 78 * u);
+    ctx.font = `600 ${Math.max(16, 22 * u)}px ${DISPLAY}`;
+    ctx.fillText(osDrag ? "Release to load the file" : "Drop files here", L.cx, d.y + 80 * u);
     ctx.fillStyle = C.muted;
-    ctx.font = `500 ${Math.max(12, 14.5 * u)}px Inter, system-ui, sans-serif`;
-    ctx.fillText("or take the shot", L.cx, d.y + 100 * u);
+    ctx.font = `500 ${Math.max(9, 10.5 * u)}px ${MONO}`;
+    ctx.fillText("OR TAKE THE SHOT", L.cx, d.y + 100 * u);
   }
 
   function drawBoard() {
-    const sx = Math.sin(time * 70) * boardShake * 2.5 * u;
-    const x = L.bx + sx, y = L.by, w = L.bw, h = L.bh, r = 9 * u;
+    const sx = Math.sin(time * 70) * boardShake * 1.5 * u;
+    const x = L.bx + sx, y = L.by, w = L.bw, h = L.bh;
 
-    // shadow cast onto the drop zone
+    // soft contact shadow on the wall behind
     ctx.save();
     ctx.shadowColor = C.shadow;
-    ctx.shadowBlur = 34 * u;
-    ctx.shadowOffsetY = 18 * u;
-    rr(x, y, w, h, r);
-    ctx.fillStyle = C.dark ? "#1c2029" : "#ffffff";
-    ctx.fill();
-    ctx.restore();
-
-    // glass
-    const glass = ctx.createLinearGradient(x, y, x + w * 0.3, y + h);
-    if (C.dark) {
-      glass.addColorStop(0, "rgba(70,82,104,0.95)");
-      glass.addColorStop(1, "rgba(32,38,50,0.95)");
-    } else {
-      glass.addColorStop(0, "rgba(255,255,255,1)");
-      glass.addColorStop(1, "rgba(222,233,246,1)");
-    }
-    rr(x, y, w, h, r);
-    ctx.fillStyle = glass;
-    ctx.fill();
-
-    // reflections
-    ctx.save();
-    rr(x, y, w, h, r);
-    ctx.clip();
-    ctx.fillStyle = C.dark ? "rgba(255,255,255,0.07)" : "rgba(255,255,255,0.75)";
-    ctx.beginPath();
-    ctx.moveTo(x + w * 0.08, y);
-    ctx.lineTo(x + w * 0.36, y);
-    ctx.lineTo(x + w * 0.16, y + h);
-    ctx.lineTo(x - w * 0.12, y + h);
-    ctx.closePath();
-    ctx.fill();
-    ctx.beginPath();
-    ctx.moveTo(x + w * 0.42, y);
-    ctx.lineTo(x + w * 0.47, y);
-    ctx.lineTo(x + w * 0.27, y + h);
-    ctx.lineTo(x + w * 0.22, y + h);
-    ctx.closePath();
-    ctx.fill();
-    // inner shade at the bottom
-    const sh = ctx.createLinearGradient(0, y + h * 0.6, 0, y + h);
-    sh.addColorStop(0, "rgba(0,0,0,0)");
-    sh.addColorStop(1, C.dark ? "rgba(0,0,0,0.25)" : "rgba(40,60,100,0.07)");
-    ctx.fillStyle = sh;
+    ctx.shadowBlur = 24 * u;
+    ctx.shadowOffsetY = 12 * u;
+    ctx.fillStyle = C.glass;
     ctx.fillRect(x, y, w, h);
     ctx.restore();
 
-    // metallic orange frame
-    const fw = 5.5 * u;
+    // tempered glass: a faint tint and one broad reflection
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(x, y, w, h);
+    ctx.clip();
+    const refl = ctx.createLinearGradient(x, y, x + w, y + h);
+    refl.addColorStop(0, "rgba(255,255,255,0)");
+    refl.addColorStop(0.32, "rgba(255,255,255,0)");
+    refl.addColorStop(0.4, C.dark ? "rgba(255,255,255,0.06)" : "rgba(255,255,255,0.45)");
+    refl.addColorStop(0.52, "rgba(255,255,255,0)");
+    ctx.fillStyle = refl;
+    ctx.fillRect(x, y, w, h);
+    ctx.restore();
+
+    // brushed aluminium frame
+    const fw = 5 * u;
     const frame = ctx.createLinearGradient(x, y, x, y + h);
-    frame.addColorStop(0, "#ff9a52");
-    frame.addColorStop(0.5, C.orange);
-    frame.addColorStop(1, "#c2490c");
-    rr(x + fw / 2, y + fw / 2, w - fw, h - fw, r - fw / 2);
+    frame.addColorStop(0, C.metalHi);
+    frame.addColorStop(1, C.metalLo);
     ctx.lineWidth = fw;
     ctx.strokeStyle = frame;
-    ctx.stroke();
-    rr(x + fw, y + fw, w - fw * 2, h - fw * 2, Math.max(1, r - fw));
+    ctx.strokeRect(x + fw / 2, y + fw / 2, w - fw, h - fw);
     ctx.lineWidth = 1;
-    ctx.strokeStyle = C.dark ? "rgba(0,0,0,0.35)" : "rgba(120,50,10,0.18)";
-    ctx.stroke();
-    // top highlight
-    ctx.beginPath();
-    ctx.moveTo(x + r, y + 1.2 * u);
-    ctx.lineTo(x + w - r, y + 1.2 * u);
-    ctx.lineWidth = 1.2 * u;
-    ctx.strokeStyle = "rgba(255,255,255,0.6)";
-    ctx.stroke();
+    ctx.strokeStyle = "rgba(0,0,0,0.25)";
+    ctx.strokeRect(x + fw + 0.5, y + fw + 0.5, w - fw * 2 - 1, h - fw * 2 - 1);
 
-    // shooter's square
-    const tw = 92 * u, th = 68 * u;
-    const tx = L.cx + sx - tw / 2, ty = y + h - 12 * u - th;
-    rr(tx, ty, tw, th, 2 * u);
-    ctx.lineWidth = 4 * u;
-    ctx.strokeStyle = C.orange;
-    ctx.stroke();
+    // painted border and shooter's square
+    const inset = fw + 6 * u;
+    ctx.lineWidth = 2.5 * u;
+    ctx.strokeStyle = C.paint;
+    ctx.strokeRect(x + inset, y + inset, w - inset * 2, h - inset * 2);
+    const tw = 92 * u, th = 66 * u;
+    ctx.strokeRect(L.hx + sx - tw / 2, y + h - inset - th - 4 * u, tw, th);
+
+    // status lamp on the top of the frame: amber while the hoop is about to move or moving
+    if (LV().moving && phase !== "menu") {
+      const on = hoopPhase === "move" || (hoopPhase === "warn" && Math.sin(time * 28) > 0);
+      ctx.fillStyle = on ? "#ffb020" : "#3a2a10";
+      ctx.fillRect(L.hx + sx - 9 * u, y - 4 * u, 18 * u, 4 * u);
+    }
+
+    // mounting bolts
+    ctx.fillStyle = C.metalLo;
+    for (const [bx, by] of [[x + fw * 2.2, y + fw * 2.2], [x + w - fw * 2.2, y + fw * 2.2], [x + fw * 2.2, y + h - fw * 2.2], [x + w - fw * 2.2, y + h - fw * 2.2]]) {
+      ctx.beginPath();
+      ctx.arc(bx, by, 1.6 * u, 0, Math.PI * 2);
+      ctx.fill();
+    }
   }
 
   function drawBracket() {
-    const w = 30 * u;
-    const top = L.by + L.bh - 16 * u;
+    const w = 26 * u;
+    const top = L.by + L.bh - 14 * u;
     const bottom = L.rimY - L.ry + rimDy + 1 * u;
-    const g = ctx.createLinearGradient(L.cx - w / 2, 0, L.cx + w / 2, 0);
-    g.addColorStop(0, "#a83f09");
-    g.addColorStop(0.5, "#e2621a");
-    g.addColorStop(1, "#a83f09");
+    const g = ctx.createLinearGradient(L.hx - w / 2, 0, L.hx + w / 2, 0);
+    g.addColorStop(0, "#1d1f21");
+    g.addColorStop(0.5, "#3a3d40");
+    g.addColorStop(1, "#1d1f21");
     ctx.fillStyle = g;
     ctx.beginPath();
-    ctx.moveTo(L.cx - w / 2, top);
-    ctx.lineTo(L.cx + w / 2, top);
-    ctx.lineTo(L.cx + w * 0.32, bottom);
-    ctx.lineTo(L.cx - w * 0.32, bottom);
+    ctx.moveTo(L.hx - w / 2, top);
+    ctx.lineTo(L.hx + w / 2, top);
+    ctx.lineTo(L.hx + w * 0.3, bottom);
+    ctx.lineTo(L.hx - w * 0.3, bottom);
     ctx.closePath();
     ctx.fill();
   }
 
+  // painted steel rim: a darker underside, the paint, and a thin top highlight
   function strokeRim(a0, a1, front) {
     const y = L.rimY + rimDy;
     const lw = L.tube * 2;
     ctx.save();
-    ctx.lineCap = "round";
-    if (rimGlow > 0) {
-      ctx.shadowColor = `rgba(255,150,60,${rimGlow})`;
-      ctx.shadowBlur = 26 * u * rimGlow;
-    }
+    ctx.lineCap = "butt";
     ctx.beginPath();
-    ctx.ellipse(L.cx, y + (front ? 1.2 * u : 0), L.rx, L.ry, 0, a0, a1);
-    ctx.lineWidth = lw + 2 * u;
-    ctx.strokeStyle = "#9c3a07";
+    ctx.ellipse(L.hx, y + 1.4 * u, L.rx, L.ry, 0, a0, a1);
+    ctx.lineWidth = lw + 1.5 * u;
+    ctx.strokeStyle = "#6e2a0f";
     ctx.stroke();
     ctx.beginPath();
-    ctx.ellipse(L.cx, y, L.rx, L.ry, 0, a0, a1);
+    ctx.ellipse(L.hx, y, L.rx, L.ry, 0, a0, a1);
     ctx.lineWidth = lw;
-    ctx.strokeStyle = front ? C.orange : "#d4581a";
+    const warning = hoopPhase === "warn" && Math.sin(time * 28) > 0;
+    ctx.strokeStyle = warning ? "#ffb020" : front ? C.rim : C.rimBack;
     ctx.stroke();
     ctx.beginPath();
-    ctx.ellipse(L.cx, y - L.tube * 0.45, L.rx, L.ry, 0, a0, a1);
-    ctx.lineWidth = 1.4 * u;
-    ctx.strokeStyle = front ? "rgba(255,200,160,0.9)" : "rgba(255,190,150,0.45)";
+    ctx.ellipse(L.hx, y - L.tube * 0.5, L.rx, L.ry, 0, a0, a1);
+    ctx.lineWidth = 1.1 * u;
+    ctx.strokeStyle = `rgba(255,226,200,${(front ? 0.55 : 0.25) + 0.35 * rimGlow})`;
     ctx.stroke();
     ctx.restore();
   }
 
+  // white nylon net: each strand gets a thin shadow line so it reads on a pale background
   function drawNet(front) {
-    ctx.save();
-    ctx.lineCap = "round";
-    ctx.lineWidth = (front ? 1.7 : 1.3) * u;
-    ctx.strokeStyle = front ? C.netFront : C.netBack;
-    ctx.beginPath();
+    const segs = [];
     for (let r = 0; r < NET_R - 1; r++) {
       for (let i = 0; i < NET_N; i++) {
         const a = node(r, i);
         for (const di of [1, -1]) {
           const b = node(r + 1, i + di);
           const isFront = Math.sin((a.th + b.th) / 2 + (Math.abs(a.th - b.th) > Math.PI ? Math.PI : 0)) > 0;
-          if (isFront !== front) continue;
-          const pa = netPos(a), pb = netPos(b);
-          ctx.moveTo(pa.x, pa.y);
-          ctx.lineTo(pb.x, pb.y);
+          if (isFront === front) segs.push([netPos(a), netPos(b)]);
         }
       }
     }
-    // bottom ring
     for (let i = 0; i < NET_N; i++) {
       const a = node(NET_R - 1, i), b = node(NET_R - 1, i + 1);
-      const isFront = Math.sin(a.th + Math.PI / NET_N) > 0;
-      if (isFront !== front) continue;
-      const pa = netPos(a), pb = netPos(b);
-      ctx.moveTo(pa.x, pa.y);
-      ctx.lineTo(pb.x, pb.y);
+      if ((Math.sin(a.th + Math.PI / NET_N) > 0) === front) segs.push([netPos(a), netPos(b)]);
     }
+    const path = () => { ctx.beginPath(); for (const [p, q] of segs) { ctx.moveTo(p.x, p.y); ctx.lineTo(q.x, q.y); } };
+    ctx.save();
+    ctx.lineCap = "round";
+    ctx.globalAlpha = front ? 1 : 0.55;
+    path();
+    ctx.lineWidth = (front ? 2.4 : 1.9) * u;
+    ctx.strokeStyle = C.netShade;
+    ctx.stroke();
+    path();
+    ctx.lineWidth = (front ? 1.3 : 1) * u;
+    ctx.strokeStyle = C.netCord;
     ctx.stroke();
     ctx.restore();
   }
 
-  // A file card with a folded corner. `flip` tumbles it in 3D.
-  // `timer` (0..1) draws the deadline ring around the card.
+  // A paper file card. Weight shows as a coloured band and outline; `flip` tumbles it in 3D;
+  // `timer` (0..1) draws the deadline frame around the card.
   function drawFile(f, x, y, scale, rot, flip, alpha, lift, timer) {
-    const w = L.cardW, h = L.cardH, fold = 15 * u, r = 7 * u;
+    if (f.bundle && f.parts) {
+      // a fanned stack: lighter files behind, the heaviest in front carrying the bundle label
+      const parts = f.parts, n = parts.length;
+      const sc = scale * WEIGHTS.bundle.scale;
+      for (let i = 0; i < n; i++) {
+        const k = n - 1 - i;
+        const dx = -k * 7 * u * sc, dy = -k * 6 * u * sc;
+        const cs = Math.cos(rot), sn = Math.sin(rot);
+        const card = { ...f, bundle: false, parts: null, weight: parts[i],
+          labelText: i === n - 1 ? `BUNDLE ${f.bundlePoints}P` : null };
+        const partScale = sc / WEIGHTS[parts[i]].scale; // keep every card in the stack the same size
+        drawFile(card, x + dx * cs - dy * sn, y + dx * sn + dy * cs, partScale, rot - k * 0.06, flip, alpha,
+          i === n - 1 ? lift : 0.05, i === n - 1 ? timer : undefined);
+      }
+      return;
+    }
+    const w = L.cardW, h = L.cardH, fold = 13 * u, r = 3 * u;
     const wt = W_(f);
     scale *= wt.scale;
     const fx = Math.cos(flip);
@@ -1705,14 +1919,14 @@
       ctx.closePath();
     };
 
-    // paper thickness + soft drop shadow
+    // paper stack thickness (heavier = thicker) and a plain soft shadow
     ctx.save();
-    ctx.shadowColor = wt.code ? wt.code + (C.dark ? "88" : "55") : C.shadow;
-    ctx.shadowBlur = (wt.code ? 14 : 8) * u + 22 * lift * u;
-    ctx.shadowOffsetY = (3 + 12 * lift) * u;
-    ctx.translate(0, wt.edge * u); // thicker paper stack for heavier files
+    ctx.shadowColor = C.shadow;
+    ctx.shadowBlur = (4 + 16 * lift) * u;
+    ctx.shadowOffsetY = (2 + 10 * lift) * u;
+    ctx.translate(0, wt.edge * u);
     body();
-    ctx.fillStyle = f.virus ? "#052e16" : wt.code || C.paperEdge;
+    ctx.fillStyle = f.virus ? "#000000" : wt.code ? shade(wt.code, -0.55) : "#9e9a90";
     ctx.fill();
     ctx.restore();
 
@@ -1722,121 +1936,139 @@
       return;
     }
 
+    // Body. Plain files are real paper; weighted files are solid colour, lit from above.
+    const coded = !!wt.code;
+    const base = coded ? wt.code : null;
+    const darkInk = f.weight === "medium"; // yellow cards take dark text
+    const ink = coded ? (darkInk ? "rgba(20,16,0,0.85)" : "rgba(255,255,255,0.95)") : "#1c1c1c";
+    const faint = coded ? (darkInk ? "rgba(20,16,0,0.28)" : "rgba(255,255,255,0.32)") : "rgba(0,0,0,0.14)";
     body();
-    const g = ctx.createLinearGradient(-w / 2, -h / 2, w / 2, h / 2);
-    g.addColorStop(0, back ? C.paperBack : C.paperA);
-    g.addColorStop(1, C.paperB);
+    const g = ctx.createLinearGradient(0, -h / 2, 0, h / 2);
+    if (coded) {
+      g.addColorStop(0, shade(base, back ? -0.1 : 0.14));
+      g.addColorStop(1, shade(base, back ? -0.35 : -0.2));
+    } else {
+      g.addColorStop(0, back ? "#dcd9d1" : "#f4f2ec");
+      g.addColorStop(1, back ? "#c3c0b7" : "#d8d5cc");
+    }
     ctx.fillStyle = g;
     ctx.fill();
-    if (wt.code) {
-      // weight colour: a soft tint plus a solid outline
-      ctx.save();
-      ctx.globalAlpha *= C.dark ? 0.22 : 0.12;
-      ctx.fillStyle = wt.code;
-      ctx.fill();
-      ctx.restore();
-      ctx.lineWidth = 2.6 * u;
-      ctx.strokeStyle = wt.code;
-    } else {
-      ctx.lineWidth = 1;
-      ctx.strokeStyle = C.dark ? "rgba(255,255,255,0.06)" : "rgba(20,30,50,0.06)";
-    }
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = coded ? shade(base, -0.35) : "rgba(0,0,0,0.25)";
     ctx.stroke();
 
     if (!back) {
-      // folded corner
+      // folded corner, slightly lighter, with a crease shadow
       ctx.save();
-      ctx.shadowColor = "rgba(0,0,0,0.12)";
-      ctx.shadowBlur = 4 * u;
+      ctx.shadowColor = "rgba(0,0,0,0.35)";
+      ctx.shadowBlur = 3 * u;
       ctx.shadowOffsetX = -1 * u;
-      ctx.shadowOffsetY = 1.5 * u;
+      ctx.shadowOffsetY = 1 * u;
       ctx.beginPath();
       ctx.moveTo(w / 2 - fold, -h / 2);
-      ctx.lineTo(w / 2 - fold, -h / 2 + fold - 3 * u);
-      ctx.quadraticCurveTo(w / 2 - fold, -h / 2 + fold, w / 2 - fold + 3 * u, -h / 2 + fold);
+      ctx.lineTo(w / 2 - fold, -h / 2 + fold);
       ctx.lineTo(w / 2, -h / 2 + fold);
       ctx.closePath();
-      ctx.fillStyle = C.paperFold;
+      ctx.fillStyle = coded ? shade(base, 0.35) : "#ffffff";
       ctx.fill();
       ctx.restore();
 
-      // text lines
-      ctx.fillStyle = C.paperLine;
-      const lx = -w / 2 + 10 * u;
-      [[0.62, -h * 0.2], [0.72, -h * 0.07], [0.48, h * 0.06]].forEach(([lw, ly]) => {
-        rr(lx, ly, (w - 20 * u) * lw, 4 * u, 2 * u);
-        ctx.fill();
-      });
-
-      // type badge
-      const bw = Math.max(26 * u, (f.ext.length * 6.6 + 10) * u), bh = 15 * u;
-      const bx = -w / 2 + 9 * u, by = h / 2 - bh - 9 * u;
-      ctx.save();
-      ctx.shadowColor = f.color + "66";
-      ctx.shadowBlur = 6 * u;
-      ctx.shadowOffsetY = 2 * u;
-      rr(bx, by, bw, bh, 4 * u);
-      ctx.fillStyle = f.color;
-      ctx.fill();
-      ctx.restore();
-      ctx.fillStyle = "#fff";
-      ctx.font = `800 ${8.5 * u}px Inter, system-ui, sans-serif`;
-      ctx.textAlign = "center";
-      ctx.textBaseline = "middle";
-      ctx.fillText(f.ext, bx + bw / 2, by + bh / 2 + 0.5 * u);
-
-      // weight tag
-      if (wt.label) {
-        ctx.fillStyle = "#fff";
-        ctx.font = `800 ${6.6 * u}px Inter, system-ui, sans-serif`;
-        const cw = ctx.measureText(wt.label).width + 8 * u, ch = 11 * u;
-        const cx0 = -w / 2 + 9 * u, cy0 = -h / 2 + 8 * u;
-        rr(cx0, cy0, cw, ch, 5.5 * u);
-        ctx.fillStyle = wt.code;
-        ctx.fill();
-        ctx.fillStyle = f.weight === "medium" ? "#422006" : "#fff";
+      let top = -h / 2 + 8 * u;
+      // weight band: a darker strip of the card's own colour with its label and points
+      if (coded) {
+        ctx.save();
+        body();
+        ctx.clip();
+        ctx.fillStyle = shade(base, -0.38);
+        ctx.fillRect(-w / 2, -h / 2, w - fold, 14 * u);
+        ctx.restore();
+        ctx.fillStyle = "#ffffff";
+        ctx.font = `700 ${6.6 * u}px ${MONO}`;
         ctx.textAlign = "left";
-        ctx.fillText(wt.label, cx0 + 4 * u, cy0 + ch / 2 + 0.4 * u);
+        ctx.textBaseline = "middle";
+        ctx.fillText(f.labelText || `${wt.label} ${wt.points}P`, -w / 2 + 5 * u, -h / 2 + 7.4 * u);
+        top = -h / 2 + 20 * u;
       }
-    } else {
-      // back of the sheet: faint show-through lines
-      ctx.fillStyle = C.dark ? "rgba(255,255,255,0.04)" : "rgba(20,30,50,0.04)";
+
+      // size readout and text lines
+      ctx.fillStyle = ink;
+      ctx.font = `600 ${6.6 * u}px ${MONO}`;
+      ctx.textAlign = "left";
+      ctx.textBaseline = "top";
+      ctx.fillText(f.size.replace(" ", ""), -w / 2 + 6 * u, top);
+      ctx.fillStyle = faint;
+      ctx.fillRect(-w / 2 + 6 * u, top + 11 * u, (w - 12 * u) * 0.8, 2.4 * u);
+      ctx.fillRect(-w / 2 + 6 * u, top + 17 * u, (w - 12 * u) * 0.55, 2.4 * u);
+
+      // file type tag: its own colour on paper, a dark plate on coloured cards
+      ctx.font = `700 ${7.4 * u}px ${MONO}`;
+      const tw = ctx.measureText(f.ext).width + 9 * u, th = 12.5 * u;
+      const bx = -w / 2 + 6 * u, by = h / 2 - th - 6 * u;
+      ctx.fillStyle = coded ? "rgba(0,0,0,0.38)" : f.color;
+      ctx.fillRect(bx, by, tw, th);
+      ctx.fillStyle = "#ffffff";
+      ctx.textBaseline = "middle";
+      ctx.fillText(f.ext, bx + 4.5 * u, by + th / 2 + 0.5 * u);
+
+      // stylised decal: three short hazard stripes in the bottom-right corner
+      ctx.save();
+      body();
+      ctx.clip();
+      ctx.strokeStyle = faint;
+      ctx.lineWidth = 2 * u;
+      ctx.beginPath();
       for (let k = 0; k < 3; k++) {
-        rr(-w / 2 + 12 * u, -h * 0.2 + k * 10 * u, w - 24 * u, 4 * u, 2 * u);
-        ctx.fill();
+        const sx = w / 2 - 4 * u - k * 5 * u;
+        ctx.moveTo(sx, h / 2);
+        ctx.lineTo(sx + 6 * u, h / 2 - 6 * u);
       }
+      ctx.stroke();
+      ctx.restore();
+    } else {
+      // back of the sheet: fine hatching
+      ctx.save();
+      body();
+      ctx.clip();
+      ctx.strokeStyle = faint;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      for (let k = -h; k < h; k += 6 * u) { ctx.moveTo(-w / 2, k); ctx.lineTo(w / 2, k + w); }
+      ctx.stroke();
+      ctx.restore();
     }
 
-    // glossy sheen
+    // a soft top-edge highlight for a little material sheen
     ctx.save();
     body();
     ctx.clip();
-    const sheen = ctx.createLinearGradient(-w / 2, -h / 2, w / 2, h / 2);
-    sheen.addColorStop(0, "rgba(255,255,255,0)");
-    sheen.addColorStop(0.45, C.dark ? "rgba(255,255,255,0.06)" : "rgba(255,255,255,0.55)");
-    sheen.addColorStop(0.55, "rgba(255,255,255,0)");
+    const sheen = ctx.createLinearGradient(0, -h / 2, 0, -h / 2 + 10 * u);
+    sheen.addColorStop(0, "rgba(255,255,255,0.22)");
+    sheen.addColorStop(1, "rgba(255,255,255,0)");
     ctx.fillStyle = sheen;
-    ctx.fillRect(-w / 2, -h / 2, w, h);
-    // dim the card as time runs out (colour is reserved for weight)
-    if (timer !== undefined && timer < 0.3) {
-      ctx.fillStyle = `rgba(15,23,42,${(0.3 - timer) * 0.5 * (0.5 + 0.5 * Math.sin(time * 14))})`;
-      ctx.fillRect(-w / 2, -h / 2, w, h);
-    }
+    ctx.fillRect(-w / 2, -h / 2, w, 10 * u);
     ctx.restore();
 
-    // deadline ring
+    // dim the card as time runs out (colour is reserved for weight)
+    if (timer !== undefined && timer < 0.3) {
+      ctx.save();
+      body();
+      ctx.clip();
+      ctx.fillStyle = `rgba(0,0,0,${(0.3 - timer) * 0.45 * (0.5 + 0.5 * Math.sin(time * 14))})`;
+      ctx.fillRect(-w / 2, -h / 2, w, h);
+      ctx.restore();
+    }
+
+    // deadline frame: a square ring that runs down, blinking near the end
     if (timer !== undefined) {
-      const pad = 7 * u, lw = 4 * u;
-      // a neutral ring that blinks when time is nearly up
-      const color = C.dark ? "#e2e8f0" : "#1e293b";
-      const len = rrFromTop(-w / 2 - pad, -h / 2 - pad, w + pad * 2, h + pad * 2, r + pad * 0.8);
-      ctx.lineWidth = lw;
-      ctx.strokeStyle = C.dark ? "rgba(255,255,255,0.1)" : "rgba(20,30,50,0.08)";
+      const pad = 6 * u;
+      const len = rrFromTop(-w / 2 - pad, -h / 2 - pad, w + pad * 2, h + pad * 2, 2 * u);
+      ctx.lineWidth = 2.2 * u;
+      ctx.strokeStyle = C.grid;
       ctx.stroke();
       ctx.save();
       ctx.setLineDash([Math.max(0.001, len * timer), len + 10]);
-      ctx.lineCap = "round";
-      ctx.strokeStyle = color;
+      ctx.lineCap = "butt";
+      ctx.strokeStyle = C.text; // neutral: red already means "heavy"
       if (timer < 0.3) ctx.globalAlpha *= 0.35 + 0.65 * (0.5 + 0.5 * Math.sin(time * 18));
       ctx.stroke();
       ctx.restore();
@@ -1845,86 +2077,73 @@
     ctx.restore();
   }
 
-  // A virus card: dark green body, a bug, a warning tag, and a pulsing red glow
+  // A virus card: black, acid-lime hazard stripes, a glyph and a MALWARE band
   function drawVirusFace(f, w, h, body) {
-    const pulse = 0.5 + 0.5 * Math.sin(time * 6 + f.ox);
-    ctx.save();
-    ctx.shadowColor = `rgba(239,68,68,${0.45 + 0.4 * pulse})`;
-    ctx.shadowBlur = (10 + 10 * pulse) * u;
+    const flicker = Math.random() < 0.04 ? 0.6 : 1;
     body();
-    const g = ctx.createLinearGradient(0, -h / 2, 0, h / 2);
-    g.addColorStop(0, "#14532d");
-    g.addColorStop(1, "#0b2e1a");
-    ctx.fillStyle = g;
+    ctx.fillStyle = "#0c0d0e";
     ctx.fill();
-    ctx.restore();
-    body();
-    ctx.lineWidth = 2.4 * u;
-    ctx.strokeStyle = `rgba(239,68,68,${0.6 + 0.4 * pulse})`;
-    ctx.stroke();
-
-    // scan lines
     ctx.save();
     body();
     ctx.clip();
-    ctx.fillStyle = "rgba(74,222,128,0.08)";
-    for (let yy = -h / 2 + ((time * 30) % (6 * u)); yy < h / 2; yy += 6 * u) ctx.fillRect(-w / 2, yy, w, 2 * u);
+    ctx.globalAlpha *= 0.16 * flicker;
+    ctx.strokeStyle = C.virus;
+    ctx.lineWidth = 3 * u;
+    ctx.beginPath();
+    for (let k = -h; k < h + w; k += 8 * u) { ctx.moveTo(-w / 2, k - h / 2); ctx.lineTo(w / 2, k - h / 2 - w); }
+    ctx.stroke();
     ctx.restore();
-
-    // bug
-    const by = -2 * u, br = 9 * u;
-    ctx.strokeStyle = "#4ade80";
-    ctx.fillStyle = "#4ade80";
-    ctx.lineWidth = 2 * u;
-    ctx.lineCap = "round";
-    ctx.beginPath();
-    ctx.ellipse(0, by, br * 0.75, br, 0, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.beginPath();
-    ctx.arc(0, by - br * 1.05, br * 0.45, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.beginPath();
-    const wig = Math.sin(time * 14 + f.ox) * 1.5 * u;
-    for (const k of [-1, 1]) {
-      for (const yy of [-0.4, 0.15, 0.7]) {
-        ctx.moveTo(k * br * 0.7, by + yy * br);
-        ctx.lineTo(k * (br * 1.35), by + yy * br - 3 * u + wig * k);
-      }
-      ctx.moveTo(k * br * 0.2, by - br * 1.4);
-      ctx.lineTo(k * br * 0.55, by - br * 1.9);
-    }
-    ctx.stroke();
-    ctx.strokeStyle = "#0b2e1a";
-    ctx.lineWidth = 1.4 * u;
-    ctx.beginPath();
-    ctx.moveTo(0, by - br * 0.9);
-    ctx.lineTo(0, by + br * 0.95);
+    body();
+    ctx.lineWidth = 1.6 * u;
+    ctx.strokeStyle = C.virus;
+    ctx.globalAlpha *= flicker;
     ctx.stroke();
 
-    // VIRUS tag + extension
-    ctx.font = `800 ${6.8 * u}px Inter, system-ui, sans-serif`;
-    const label = "VIRUS";
-    const cw = ctx.measureText(label).width + 8 * u, ch = 11 * u;
-    rr(-cw / 2, -h / 2 + 7 * u, cw, ch, 5.5 * u);
-    ctx.fillStyle = "#ef4444";
-    ctx.fill();
-    ctx.fillStyle = "#fff";
+    // MALWARE band
+    ctx.save();
+    body();
+    ctx.clip();
+    ctx.fillStyle = C.virus;
+    ctx.fillRect(-w / 2, -h / 2, w, 14 * u);
+    ctx.restore();
+    ctx.fillStyle = "#0c0d0e";
+    ctx.font = `700 ${6.6 * u}px ${MONO}`;
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
-    ctx.fillText(label, 0, -h / 2 + 7 * u + ch / 2 + 0.4 * u);
-    ctx.fillStyle = "#86efac";
-    ctx.font = `800 ${8 * u}px Inter, system-ui, sans-serif`;
-    ctx.fillText(`.${f.ext.toLowerCase()}`, 0, h / 2 - 12 * u);
+    ctx.fillText("MALWARE", 0, -h / 2 + 7.4 * u);
+
+    // glyph: a bug, drawn in thin lines
+    const by = 2 * u, br = 8 * u;
+    const wig = Math.sin(time * 14 + f.ox) * 1.2 * u;
+    ctx.strokeStyle = C.virus;
+    ctx.lineWidth = 1.5 * u;
+    ctx.lineCap = "square";
+    ctx.beginPath();
+    ctx.ellipse(0, by, br * 0.7, br, 0, 0, Math.PI * 2);
+    ctx.moveTo(0, by - br); ctx.lineTo(0, by + br);
+    for (const k of [-1, 1]) {
+      for (const yy of [-0.45, 0.1, 0.65]) {
+        ctx.moveTo(k * br * 0.7, by + yy * br);
+        ctx.lineTo(k * br * 1.35, by + yy * br - 3 * u + wig * k);
+      }
+      ctx.moveTo(k * br * 0.25, by - br * 1.0);
+      ctx.lineTo(k * br * 0.6, by - br * 1.55);
+    }
+    ctx.stroke();
+
+    ctx.fillStyle = C.virus;
+    ctx.font = `600 ${7 * u}px ${MONO}`;
+    ctx.fillText(`.${f.ext.toLowerCase()}`, 0, h / 2 - 9 * u);
   }
 
   function drawFloorShadow(x, y, scale, alpha) {
     const height = clamp((L.floorY - y) / (H * 0.7), 0, 1);
     const rx = L.cardW * 0.55 * scale * (1 - 0.6 * height);
-    const a = (C.dark ? 0.5 : 0.22) * (1 - height) * alpha;
+    const a = (C.dark ? 0.5 : 0.2) * (1 - height) * alpha;
     if (a <= 0.01) return;
     const g = ctx.createRadialGradient(x, L.floorY + 4 * u, 0, x, L.floorY + 4 * u, rx);
-    g.addColorStop(0, `rgba(10,15,30,${a})`);
-    g.addColorStop(1, "rgba(10,15,30,0)");
+    g.addColorStop(0, `rgba(0,0,0,${a})`);
+    g.addColorStop(1, "rgba(0,0,0,0)");
     ctx.save();
     ctx.translate(0, L.floorY + 4 * u);
     ctx.scale(1, 0.28);
@@ -1944,78 +2163,70 @@
     const v = launchVelocity(f, info);
     let x = f.x, y = f.y, vx = v.vx, vy = v.vy;
     const step = 1 / 120;
-    const dots = 20;
+    const short = LV().shortAim;
+    const dots = short ? Math.ceil(22 * AIM_VISIBLE) : 22; // bad connection: only the start of the arc
     const ready = info.power >= 0.12;
     ctx.save();
+    ctx.fillStyle = C.accent;
     for (let d = 1; d <= dots; d++) {
       for (let s = 0; s < 4; s++) { vy += L.g * step; x += vx * step; y += vy * step; }
       if (y > L.floorY) break;
-      const t = d / dots;
-      ctx.globalAlpha = (1 - t) * (ready ? 0.95 : 0.35);
-      ctx.fillStyle = C.orange;
-      ctx.beginPath();
-      ctx.arc(x, y, (4.2 - 2.4 * t) * u, 0, Math.PI * 2);
-      ctx.fill();
+      const t = short ? d / 22 : d / dots;
+      ctx.globalAlpha = (1 - t) * (ready ? 0.9 : 0.3) * (short && d === dots && Math.random() < 0.3 ? 0.2 : 1);
+      const sz = (3.4 - 1.8 * t) * u;
+      ctx.fillRect(x - sz / 2, y - sz / 2, sz, sz);
+      if (short && d === dots && ready) {
+        ctx.globalAlpha = 0.8;
+        ctx.font = `600 ${Math.max(8, 9 * u)}px ${MONO}`;
+        ctx.textAlign = "left";
+        ctx.textBaseline = "middle";
+        ctx.fillText("SIGNAL LOST", x + 8 * u, y);
+      }
     }
     ctx.restore();
 
-    // tether + ghost of where the file was picked up
+    // tether + outline of where the file was picked up
     ctx.save();
-    ctx.setLineDash([4 * u, 5 * u]);
-    ctx.strokeStyle = C.line;
-    ctx.lineWidth = 1.5 * u;
-    rr(f.ox - L.cardW / 2, f.oy - L.cardH / 2, L.cardW, L.cardH, 8 * u);
-    ctx.stroke();
+    ctx.setLineDash([3, 4]);
+    ctx.strokeStyle = C.muted;
+    ctx.lineWidth = 1;
+    ctx.strokeRect(f.ox - L.cardW / 2, f.oy - L.cardH / 2, L.cardW, L.cardH);
     ctx.beginPath();
     ctx.moveTo(f.ox, f.oy);
     ctx.lineTo(f.x, f.y);
     ctx.stroke();
     ctx.restore();
 
-    // power ring (skipped in level 3, where the deadline ring sits around the card)
+    // power readout: a thin arc and a percentage (skipped when the deadline frame is shown)
     if (f.deadline !== undefined) return;
     const pr = L.cardH * 0.72;
     ctx.save();
-    ctx.lineWidth = 3.5 * u;
-    ctx.lineCap = "round";
-    ctx.strokeStyle = C.dark ? "rgba(255,255,255,0.08)" : "rgba(20,30,50,0.07)";
+    ctx.lineWidth = 2 * u;
+    ctx.strokeStyle = C.grid;
     ctx.beginPath();
     ctx.arc(f.x, f.y, pr, 0, Math.PI * 2);
     ctx.stroke();
-    const pg = ctx.createLinearGradient(f.x - pr, 0, f.x + pr, 0);
-    pg.addColorStop(0, C.accent);
-    pg.addColorStop(1, C.orange);
-    ctx.strokeStyle = pg;
+    ctx.strokeStyle = C.accent;
     ctx.beginPath();
     ctx.arc(f.x, f.y, pr, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * info.power);
     ctx.stroke();
+    ctx.fillStyle = C.accent;
+    ctx.font = `600 ${Math.max(9, 10 * u)}px ${MONO}`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "bottom";
+    ctx.fillText(`PWR ${String(Math.round(info.power * 100)).padStart(3, "0")}`, f.x, f.y - pr - 4 * u);
     ctx.restore();
   }
 
   function fileLayer(f) {
     if (f.behind) return 0;
-    if (f.aboveRim && Math.abs(f.x - L.cx) < L.rx + L.fr * 2.2 &&
+    if (f.aboveRim && Math.abs(f.x - L.hx) < L.rx + L.fr * 2.2 &&
         f.y > L.rimY - L.fr * 3.5 && f.y < L.rimY + L.netH + L.fr) return 1;
     return 2;
   }
 
   function drawFlying(f) {
     const scale = (1 - 0.3 * f.depth) * (f.behind ? 0.85 : 1);
-    // motion trail
-    if (!f.landed && !f.fading) {
-      ctx.save();
-      for (let i = 0; i < f.trail.length - 1; i++) {
-        const p = f.trail[i];
-        const t = i / f.trail.length;
-        ctx.globalAlpha = t * 0.22 * f.alpha;
-        ctx.globalCompositeOperation = C.dark ? "lighter" : "source-over";
-        ctx.fillStyle = W_(f).code || f.color;
-        ctx.beginPath();
-        ctx.arc(p.x, p.y, L.cardW * 0.28 * scale * t, 0, Math.PI * 2);
-        ctx.fill();
-      }
-      ctx.restore();
-    }
     const lift = f.landed ? 0.1 : 1;
     drawFile(f, f.x, f.y, scale, f.rot, f.flip, Math.max(0, f.alpha), lift);
   }
@@ -2023,34 +2234,28 @@
   function drawWaiting(f) {
     let scale = 1, x = f.x, y = f.y, lift = 0.15, rot = f.rot;
     if (f.state === "spawning") scale = Math.max(0.01, easeOutBack(f.t));
-    if (f.state === "idle") y = f.oy - Math.abs(Math.sin(time * 2.6 + f.ox * 0.01)) * 4 * u;
-    if (f.state === "dragging") { scale = 1.06; lift = 1; }
+    if (f.state === "idle") y = f.oy - Math.abs(Math.sin(time * 2.6 + f.ox * 0.01)) * 3 * u;
+    if (f.state === "dragging") { scale = 1.05; lift = 1; }
 
     let timer;
     if (f.deadline !== undefined) {
       timer = clamp((f.deadline - time) / (f.ttl || DEADLINE), 0, 1);
-      if (timer < 0.3 && !reduceMotion) { // jitter when it's about to expire
-        x += Math.sin(time * 50 + f.ox) * 1.6 * u;
-        rot += Math.sin(time * 37 + f.ox) * 0.03;
-      }
+      if (timer < 0.3 && !reduceMotion) x += Math.sin(time * 50 + f.ox) * 1.2 * u;
     }
 
-    // invite ring for brand new players
-    if (f.state === "idle" && shots < 3 && level === 1) {
+    // first-time hint: brackets closing in on the card
+    if (f.state === "idle" && shots < 3 && level === 1 && mode === "classic") {
       const t = (time * 0.9) % 1;
+      const pad = (18 - 10 * t) * u;
       ctx.save();
-      ctx.globalAlpha = (1 - t) * 0.5;
-      ctx.strokeStyle = C.accent;
-      ctx.lineWidth = 2 * u;
-      ctx.beginPath();
-      ctx.arc(f.x, f.oy, L.cardH * (0.55 + t * 0.5), 0, Math.PI * 2);
-      ctx.stroke();
+      ctx.globalAlpha = 0.25 + 0.75 * t;
+      cornerBrackets(f.x - L.cardW / 2 - pad, f.oy - L.cardH / 2 - pad, L.cardW + pad * 2, L.cardH + pad * 2, 9 * u, C.accent, 1.5);
       ctx.restore();
     }
 
     let alpha = 1;
     if (f.virus) {
-      x += Math.sin(time * 23 + f.ox) * 0.8 * u; // restless
+      x += Math.sin(time * 23 + f.ox) * 0.6 * u;
       alpha = clamp((f.expires - time) / 0.8, 0, 1);
     }
     drawFile(f, x, y, scale, rot, 0, alpha, lift, timer);
@@ -2060,12 +2265,12 @@
       ctx.save();
       ctx.globalAlpha = f.state === "spawning" ? f.t : 1;
       ctx.fillStyle = C.muted;
-      ctx.font = `500 ${Math.max(11, 13 * u)}px Inter, system-ui, sans-serif`;
+      ctx.font = `500 ${Math.max(9, 10.5 * u)}px ${MONO}`;
       ctx.textAlign = "center";
       ctx.textBaseline = "top";
       let label = `${f.name}.${f.ext.toLowerCase()}`;
-      if (label.length > 24) label = label.slice(0, 21) + "…";
-      ctx.fillText(label, f.x, L.floorY + 8 * u);
+      if (label.length > 26) label = label.slice(0, 23) + "…";
+      ctx.fillText(label, f.x, L.floorY + 14 * u);
       ctx.restore();
     }
   }
@@ -2076,35 +2281,20 @@
   }
 
   function drawEffects() {
-    if (rimGlow > 0) {
-      // a warm flash of light at the hoop after a basket
-      ctx.save();
-      ctx.globalCompositeOperation = "lighter";
-      const r = (60 + 90 * (1 - rimGlow)) * u;
-      const g = ctx.createRadialGradient(L.cx, L.rimY, 0, L.cx, L.rimY, r);
-      g.addColorStop(0, `rgba(255,170,90,${0.55 * rimGlow})`);
-      g.addColorStop(1, "rgba(255,120,40,0)");
-      ctx.fillStyle = g;
-      ctx.beginPath();
-      ctx.arc(L.cx, L.rimY, r, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.restore();
-    }
-
     for (const r of rings) {
       const t = r.t / r.life;
       ctx.save();
-      const round = r.glass || r.virus;
-      ctx.globalAlpha = (1 - t) * (r.glass ? 0.5 : 0.7);
-      ctx.strokeStyle = r.virus ? "#22c55e" : r.glass ? "#ffffff" : r.revive ? "#22c55e" : C.orange;
-      ctx.lineWidth = (round ? 2.5 : 3) * u * (1 - t) + 0.5;
+      ctx.globalAlpha = (1 - t) * 0.8;
+      ctx.strokeStyle = r.virus ? C.virus : r.glass ? C.muted : r.revive ? C.good : C.accent;
+      ctx.lineWidth = 1.5;
       ctx.beginPath();
-      if (round) ctx.arc(r.x, r.y, 10 * u + t * (r.virus ? 60 : 40) * u, 0, Math.PI * 2);
-      else ctx.ellipse(r.x, r.y, L.rx + t * 70 * u, L.ry + t * 20 * u, 0, 0, Math.PI * 2);
+      if (r.glass || r.virus) ctx.arc(r.x, r.y, 8 * u + t * (r.virus ? 50 : 32) * u, 0, Math.PI * 2);
+      else ctx.ellipse(r.x, r.y, L.rx + t * 46 * u, L.ry + t * 12 * u, 0, 0, Math.PI * 2);
       ctx.stroke();
       ctx.restore();
     }
 
+    // particles are small hard-edged squares, no glow
     for (const p of particles) {
       const t = p.t / p.life;
       ctx.save();
@@ -2113,41 +2303,36 @@
       if (p.kind === "confetti") {
         ctx.translate(p.x, p.y);
         ctx.rotate(p.rot);
-        ctx.scale(1, Math.cos(p.rot * 1.7)); // flutter
-        if (p.dot) { ctx.beginPath(); ctx.arc(0, 0, p.h * 0.7, 0, Math.PI * 2); ctx.fill(); }
-        else ctx.fillRect(-p.w / 2, -p.h / 2, p.w, p.h);
+        ctx.scale(1, Math.cos(p.rot * 1.7));
+        ctx.fillRect(-p.w / 2, -p.h / 2, p.w, p.h);
       } else {
-        ctx.beginPath();
-        ctx.arc(p.x, p.y, p.r * (1 - t), 0, Math.PI * 2);
-        ctx.fill();
+        const sz = p.r * 1.4 * (1 - t);
+        ctx.fillRect(p.x - sz / 2, p.y - sz / 2, sz, sz);
       }
       ctx.restore();
     }
 
+    // numbers in the display face, words as small uppercase technical labels
     for (const tx of texts) {
       const t = tx.t / tx.life;
-      const pop = t < 0.15 ? easeOutBack(t / 0.15) : 1;
+      const isNum = /^[+-]\d/.test(tx.text);
+      const pop = t < 0.12 ? 0.85 + 0.15 * (t / 0.12) : 1;
       ctx.save();
       ctx.globalAlpha = t > 0.7 ? 1 - (t - 0.7) / 0.3 : 1;
-      ctx.translate(tx.x, tx.y - t * 34 * u);
+      ctx.translate(tx.x, tx.y - t * 24 * u);
       ctx.scale(pop, pop);
-      ctx.font = `${tx.weight} ${tx.size}px Sora, Inter, system-ui, sans-serif`;
+      const size = isNum ? tx.size : Math.max(10, tx.size * 0.72);
+      ctx.font = isNum ? `700 ${size}px ${DISPLAY}` : `600 ${size}px ${MONO}`;
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
-      if (tx.glow) {
-        // big score pops: white outline plus a coloured glow
-        ctx.shadowColor = tx.color;
-        ctx.shadowBlur = 24;
-        ctx.lineJoin = "round";
-        ctx.lineWidth = Math.max(3, tx.size * 0.12);
-        ctx.strokeStyle = C.dark ? "rgba(10,12,16,0.9)" : "#ffffff";
-        ctx.strokeText(tx.text, 0, 0);
-      } else {
-        ctx.shadowColor = C.dark ? "rgba(0,0,0,0.6)" : "rgba(255,255,255,0.9)";
-        ctx.shadowBlur = 10;
-      }
+      const label = isNum ? tx.text : tx.text.toUpperCase();
+      // a thin outline in the background colour keeps text readable over the net
+      ctx.lineJoin = "round";
+      ctx.lineWidth = Math.max(3, size * 0.16);
+      ctx.strokeStyle = C.bg;
+      ctx.strokeText(label, 0, 0);
       ctx.fillStyle = tx.color;
-      ctx.fillText(tx.text, 0, 0);
+      ctx.fillText(label, 0, 0);
       ctx.restore();
     }
   }
@@ -2155,12 +2340,12 @@
   function drawHint() {
     if (hintAlpha <= 0 || phase !== "playing") return;
     ctx.save();
-    ctx.globalAlpha = hintAlpha * (0.65 + 0.35 * Math.sin(time * 3));
+    ctx.globalAlpha = hintAlpha * (0.6 + 0.4 * Math.sin(time * 3));
     ctx.fillStyle = C.muted;
-    ctx.font = `500 ${Math.max(12, 14 * u)}px Inter, system-ui, sans-serif`;
+    ctx.font = `500 ${Math.max(9, 11 * u)}px ${MONO}`;
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
-    ctx.fillText("Drag a file toward the hoop, then let go", L.cx, L.rimY + L.netH + 62 * u);
+    ctx.fillText("DRAG A FILE TOWARD THE HOOP, THEN LET GO", L.cx, L.rimY + L.netH + 62 * u);
     ctx.restore();
   }
 
@@ -2331,6 +2516,10 @@
     beginLevel: () => beginLevel(),
     testScore: (weight) => onScore({ ...makeFakeFile(), weight: weight || (LV().weights ? "medium" : "plain"), rimHits: 0, banked: false }),
     testMiss: () => registerMiss("Missed", L.cx, L.rimY + L.netH),
+    testBundle: () => { spawn(false, true); return waiting[waiting.length - 1]; },
+    get hoopShift() { return hoopShift; }, get hoopPhase() { return hoopPhase; }, get rx() { return L.rx; },
+    get levelPoints() { return levelPoints; }, get won() { return won; },
+    scoreFile: (f) => onScore({ ...f, rimHits: 0, banked: false }),
   };
 
   const STEP = 1 / 120;
