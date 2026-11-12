@@ -12,7 +12,6 @@ A browser game that turns a file upload screen into basketball. Drag a file card
 
 - Drag a file card. The further you pull, the harder you throw. A dotted line shows where it'll go.
 - Let go to shoot. Through the rim is uploaded, anything else is missed.
-- You can also drop your own files onto the page and shoot those. Nothing actually gets uploaded.
 
 **Modes**
 

@@ -115,7 +115,6 @@
   const pipsEl = $("pips");
   const trayEl = $("tray");
   const muteBtn = $("mute");
-  const picker = $("picker");
   const introEl = $("intro");
   const reviveEl = $("revivePrompt");
   const overEl = $("over");
@@ -260,13 +259,6 @@
   function makeVirusFile() {
     const [name, ext] = pick(VIRUS_NAMES);
     return { name, ext, color: "#16a34a", bytes: 0, weight: "plain", size: "??", virus: true };
-  }
-
-  function makeRealFile(file) {
-    const dot = file.name.lastIndexOf(".");
-    const ext = (dot > 0 ? file.name.slice(dot + 1) : "FILE").toUpperCase().slice(0, 4);
-    const name = dot > 0 ? file.name.slice(0, dot) : file.name;
-    return { name, ext, color: TYPE_COLORS[ext] || "#64748b", bytes: file.size, weight: "plain", size: formatSize(file.size), real: true };
   }
 
   // ---------- Sound (tiny Web Audio synth, no files needed) ----------
@@ -483,7 +475,6 @@
   const particles = [];
   const texts = [];
   const rings = [];
-  const queue = [];         // real files the player dropped in
   let drag = null;
   let nextSpawnAt = 0.2;
   let firstSpawn = true;
@@ -493,7 +484,6 @@
   let boardShake = 0;
   let rimGlow = 0;           // flash on the rim after a basket
   let camShake = 0;
-  let osDrag = false, osDragTimer = 0;
   let time = 0;
 
   const LV = () => (mode === "classic" ? LEVELS[level] : { weights: true, mix: MIX_LATER });
@@ -592,8 +582,8 @@
   }
 
   function spawn(virus = false, forceBundle = false) {
-    const wantBundle = forceBundle || (!virus && !queue.length && LV().bundles && Math.random() < BUNDLE_CHANCE && !waiting.some((w) => w.bundle));
-    const info = virus ? makeVirusFile() : wantBundle ? makeBundle() : queue.length ? queue.shift() : makeFakeFile(LV().mix);
+    const wantBundle = forceBundle || (!virus && LV().bundles && Math.random() < BUNDLE_CHANCE && !waiting.some((w) => w.bundle));
+    const info = virus ? makeVirusFile() : wantBundle ? makeBundle() : makeFakeFile(LV().mix);
     if (wantBundle) info.bundle = true;
     else if (!virus && LV().weights) info.weight = weightOf(info.bytes);
     const x = clamp(pickSpawnX(), L.margin, W - L.margin);
@@ -1687,7 +1677,7 @@
 
   function drawDropZone() {
     const d = L.dz;
-    const active = !!held || osDrag;
+    const active = !!held;
     ctx.save();
     ctx.fillStyle = C.zone;
     ctx.fillRect(d.x, d.y, d.w, d.h);
@@ -1731,7 +1721,7 @@
     ctx.textBaseline = "alphabetic";
     ctx.fillStyle = C.text;
     ctx.font = `600 ${Math.max(16, 22 * u)}px ${DISPLAY}`;
-    ctx.fillText(osDrag ? "Release to load the file" : "Drop files here", L.cx, d.y + 80 * u);
+    ctx.fillText("Drop files here", L.cx, d.y + 80 * u);
     ctx.fillStyle = C.muted;
     ctx.font = `500 ${Math.max(9, 10.5 * u)}px ${MONO}`;
     ctx.fillText("OR TAKE THE SHOT", L.cx, d.y + 100 * u);
@@ -2437,39 +2427,8 @@
   canvas.addEventListener("pointerup", (e) => endDrag(e, false));
   canvas.addEventListener("pointercancel", (e) => endDrag(e, true));
 
-  // Real files: drop them anywhere on the page (or use the "Your files" button)
-  function loadRealFiles(list) {
-    const files = Array.from(list || []);
-    if (!files.length || phase === "over") return;
-    files.slice(0, 50).forEach((f) => queue.push(makeRealFile(f)));
-    // swap the waiting fake files for real ones straight away
-    for (const f of waiting) {
-      if (f === held || f.real || f.virus || !queue.length) continue;
-      const info = queue.shift();
-      if (LV().weights) info.weight = weightOf(info.bytes);
-      Object.assign(f, info, { state: "spawning", t: 0, oy: restY(info), y: restY(info) });
-    }
-    sfx.pop();
-    floatText(files.length === 1 ? "File loaded. Take the shot!" : `${files.length} files loaded. Take the shots!`,
-      L.cx, L.rimY + L.netH + 34 * u, { size: 16 * u, color: C.accent, weight: 700, life: 1.8 });
-  }
-
-  window.addEventListener("dragover", (e) => {
-    e.preventDefault();
-    osDrag = true;
-    clearTimeout(osDragTimer);
-    osDragTimer = setTimeout(() => { osDrag = false; }, 200);
-  });
-  window.addEventListener("drop", (e) => {
-    e.preventDefault();
-    osDrag = false;
-    loadRealFiles(e.dataTransfer && e.dataTransfer.files);
-  });
-  picker.addEventListener("change", () => {
-    sfx.unlock();
-    loadRealFiles(picker.files);
-    picker.value = "";
-  });
+  // Dropping a real file on the page would make the browser open it and leave the game
+  for (const type of ["dragover", "drop"]) window.addEventListener(type, (e) => e.preventDefault());
 
   // ---------- Install as an app ----------
   // Works when the page is served over http(s), e.g. GitHub Pages. Opening the file directly skips this.
