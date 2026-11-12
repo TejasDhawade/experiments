@@ -8,14 +8,14 @@
 
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Sora:wght@600;700;800&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Inter+Tight:wght@500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
 
   <link rel="stylesheet" href="game.css">
 
   <!-- Installable app -->
   <link rel="manifest" href="manifest.webmanifest">
-  <meta name="theme-color" content="#eceff4" media="(prefers-color-scheme: light)">
-  <meta name="theme-color" content="#111317" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#ecebe6" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0e0f10" media="(prefers-color-scheme: dark)">
   <link rel="icon" href="icons/favicon-32.png" sizes="32x32" type="image/png">
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
   <meta name="apple-mobile-web-app-capable" content="yes">
@@ -79,23 +79,45 @@
   <div class="screen menu" id="menu">
     <div class="card menu-card" role="dialog" aria-modal="true" aria-labelledby="menuTitle">
       <div id="menuMain">
-        <img class="logo" src="icons/icon-192.png" alt="" width="76" height="76">
+        <div class="menu-head">
+          <span>FILE SHOT // UPLINK</span>
+          <span>V2.1</span>
+        </div>
+        <svg class="mark" viewBox="0 0 64 64" aria-hidden="true">
+          <rect x="22" y="6" width="20" height="26" rx="1.5"/>
+          <path d="M36 6v6h6M27 16h10M27 21h7"/>
+          <path d="M10 38h44"/>
+          <path d="M14 38l5 18M22 38l3 18M32 38v18M42 38l-3 18M50 38l-5 18M17 47h30"/>
+        </svg>
         <h2 id="menuTitle">File Shot</h2>
         <p class="tagline">Drag, aim, upload. Basketball for your files.</p>
 
-        <div class="menu-buttons">
-          <button class="cta big" id="startClassic" type="button">
-            <span>Start game</span>
-            <small>Classic · 5 levels</small>
+        <div class="mode-cards">
+          <button class="mode-card primary" id="startClassic" type="button">
+            <span class="mode-top">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9h16"/><path d="M6 9l2 9M10 9l1 9M14 9l-1 9M18 9l-2 9M7 13.5h10"/><path d="M9 3h6v4H9z"/></svg>
+              <span class="mode-code">MODE 01</span>
+            </span>
+            <span class="mode-title">Start game</span>
+            <span class="mode-meta">CLASSIC · 5 LEVELS</span>
+            <span class="mode-desc">One new rule per level. Lose on 6 misses in a row.</span>
+            <span class="mode-go" aria-hidden="true">→</span>
           </button>
-          <button class="cta big alt" id="startTimed" type="button">
-            <span>Timed run</span>
-            <small>60 seconds · swishes add time</small>
+          <button class="mode-card" id="startTimed" type="button">
+            <span class="mode-top">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="13.5" r="7.5"/><path d="M12 13.5V9.5M12 13.5l3 2M10 3h4M12 3v3M18.5 6.5l1.5-1.5"/></svg>
+              <span class="mode-code">MODE 02</span>
+            </span>
+            <span class="mode-title">Timed run</span>
+            <span class="mode-meta">60 SEC · ONE CLOCK</span>
+            <span class="mode-desc">Score as much as you can. Swishes add 2 seconds.</span>
+            <span class="mode-go" aria-hidden="true">→</span>
           </button>
-          <div class="menu-row">
-            <button class="cta ghost" id="howTo" type="button" aria-expanded="false" aria-controls="howPanel">How to play</button>
-            <button class="cta ghost" id="exitGame" type="button">Exit game</button>
-          </div>
+        </div>
+
+        <div class="menu-row">
+          <button class="cta ghost" id="howTo" type="button" aria-expanded="false" aria-controls="howPanel">How to play</button>
+          <button class="cta ghost" id="exitGame" type="button">Exit game</button>
         </div>
 
         <div class="how" id="howPanel" hidden>
