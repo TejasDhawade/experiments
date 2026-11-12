@@ -32,7 +32,7 @@ A browser game that turns a file upload screen into basketball. Drag a file card
 
 Your score is in points; best scores are saved on your device.
 
-**Built with** plain HTML, CSS and JavaScript on a single canvas. No libraries. Works on desktop and phone, can be installed like an app, and plays offline once loaded.
+**Built with** plain HTML, CSS and JavaScript on a single canvas. No libraries. Works on desktop and phone.
 
 Code lives in [`file-shot/`](file-shot/).
 

@@ -1290,7 +1290,7 @@
     }
   }
 
-  // Browsers only let a page close a window it opened itself (or an installed app window),
+  // Browsers only let a page close a window it opened itself,
   // so if closing doesn't work we show a goodbye message instead.
   function exitGame() {
     try { window.close(); } catch (e) { /* ignore */ }
@@ -2430,28 +2430,15 @@
   // Dropping a real file on the page would make the browser open it and leave the game
   for (const type of ["dragover", "drop"]) window.addEventListener(type, (e) => e.preventDefault());
 
-  // ---------- Install as an app ----------
-  // Works when the page is served over http(s), e.g. GitHub Pages. Opening the file directly skips this.
-  const installBtn = $("install");
-  let installPrompt = null;
-  if ("serviceWorker" in navigator && /^https?:$/.test(location.protocol)) {
-    window.addEventListener("load", () => {
-      navigator.serviceWorker.register("sw.js").catch(() => { /* offline support is optional */ });
-    });
+  // ---------- Retire the old installable version ----------
+  // Earlier versions could be installed as an app with offline support. That's gone, so remove
+  // any service worker and offline copy left on a player's device; the site then loads normally.
+  if ("serviceWorker" in navigator) {
+    navigator.serviceWorker.getRegistrations().then((regs) => regs.forEach((r) => r.unregister())).catch(() => {});
   }
-  window.addEventListener("beforeinstallprompt", (e) => {
-    e.preventDefault(); // show our own Install button instead of the browser's mini bar
-    installPrompt = e;
-    installBtn.hidden = false;
-  });
-  installBtn.addEventListener("click", async () => {
-    if (!installPrompt) return;
-    installPrompt.prompt();
-    try { await installPrompt.userChoice; } catch (e) { /* ignore */ }
-    installPrompt = null;
-    installBtn.hidden = true;
-  });
-  window.addEventListener("appinstalled", () => { installBtn.hidden = true; });
+  if (window.caches) {
+    caches.keys().then((keys) => keys.filter((k) => k.startsWith("fileshot-")).forEach((k) => caches.delete(k))).catch(() => {});
+  }
 
   // ---------- Boot ----------
   let resizeRaf = 0;
