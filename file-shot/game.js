@@ -71,9 +71,9 @@
   const WEIGHTS = {
     // points per upload, and seconds on the floor when files are timed
     plain:  { pull: 1,    scale: 1,    edge: 2.5, label: "",       code: "",        points: 1, ttl: 8 },
-    light:  { pull: 0.7,  scale: 0.9,  edge: 1.6, label: "LIGHT",  code: "#2f6bff", points: 1, ttl: 10 },
-    medium: { pull: 1,    scale: 1,    edge: 2.5, label: "NORMAL", code: "#f2c200", points: 2, ttl: 8 },
-    heavy:  { pull: 1.38, scale: 1.12, edge: 5,   label: "HEAVY",  code: "#ff3b30", points: 3, ttl: 6 },
+    light:  { pull: 0.7,  scale: 0.82, edge: 1.4, label: "LIGHT",  code: "#3a7bff", points: 1, ttl: 10 },
+    medium: { pull: 1,    scale: 1,    edge: 2.6, label: "NORMAL", code: "#f5c518", points: 2, ttl: 8 },
+    heavy:  { pull: 1.38, scale: 1.26, edge: 5.5, label: "HEAVY",  code: "#e8322b", points: 3, ttl: 6 },
   };
   const weightOf = (bytes) => (bytes < LIGHT_MAX ? "light" : bytes >= HEAVY_MIN ? "heavy" : "medium");
   const W_ = (f) => WEIGHTS[f.weight] || WEIGHTS.plain;
@@ -125,6 +125,13 @@
   const lerp = (a, b, t) => a + (b - a) * t;
   const rand = (a, b) => a + Math.random() * (b - a);
   const pick = (arr) => arr[(Math.random() * arr.length) | 0];
+  // lighten (amt > 0) or darken (amt < 0) a #rrggbb colour
+  function shade(hex, amt) {
+    const n = parseInt(hex.slice(1), 16);
+    const ch = [(n >> 16) & 255, (n >> 8) & 255, n & 255].map((v) =>
+      Math.round(amt >= 0 ? v + (255 - v) * amt : v * (1 + amt)));
+    return `rgb(${ch.join(",")})`;
+  }
   const easeOutBack = (t) => { const c = 1.9; return 1 + (c + 1) * Math.pow(t - 1, 3) + c * Math.pow(t - 1, 2); };
 
   function rr(x, y, w, h, r) {
@@ -159,12 +166,11 @@
   function readColors() {
     const cs = getComputedStyle(document.documentElement);
     const g = (n) => cs.getPropertyValue(n).trim();
-    const t = document.documentElement.getAttribute("data-theme");
-    const dark = t ? t === "dark" : darkQuery.matches;
+    const dark = true; // the game has one look: dark
     C = {
       dark,
       bg: g("--bg"), bg2: g("--bg2"), surface: g("--surface"), text: g("--text"),
-      muted: g("--muted"), line: g("--line"), accent: g("--accent"),
+      muted: g("--muted"), line: g("--line"), accent: g("--accent"), onAccent: g("--on-accent"),
       danger: g("--bad"), good: g("--good"), virus: g("--virus"),
       grid: dark ? "rgba(255,255,255,0.035)" : "rgba(17,17,17,0.03)",
       gridMajor: dark ? "rgba(255,255,255,0.07)" : "rgba(17,17,17,0.06)",
@@ -366,8 +372,8 @@
     L.dz = { x: L.cx - dzW / 2, y: L.by - dzAbove, w: dzW, h: L.rimY + 4 * u - (L.by - dzAbove) };
 
     // files
-    L.cardW = 60 * u;
-    L.cardH = 76 * u;
+    L.cardW = 64 * u;
+    L.cardH = 82 * u;
     L.fr = 17 * u;          // collision radius at hoop depth
     L.floorY = H - Math.max(48 * u, 40);
     L.g = 1750 * u;
@@ -842,7 +848,7 @@
 
     if (clean) swishes++;
     const label = f.banked ? "Bank shot!" : clean ? "Swish!" : pick(["Nice!", "Rattled in!", "Got it!"]);
-    floatText(`+${pts}`, L.cx, L.rimY - 30 * u, { size: (34 + pts * 5) * u, color: W_(f).code || C.text, life: 1.1 });
+    floatText(`+${pts}`, L.cx, L.rimY - 30 * u, { size: (34 + pts * 5) * u, color: W_(f).code || C.accent, life: 1.1 });
     floatText(label, L.cx, L.rimY - 74 * u, { size: 22 * u, color: C.text, weight: 700, life: 1.2 });
     if (streak >= 3) floatText(`Streak ×${streak}`, L.cx, L.rimY + L.netH + 34 * u, { size: 17 * u, color: C.text, weight: 700, life: 1.4 });
 
@@ -865,7 +871,7 @@
     updateHud();
     bump(scorePill.querySelector(".stat.pts"));
 
-    confetti(L.cx, L.rimY, clean ? 60 : 40, W_(f).code);
+    confetti(L.cx, L.rimY, clean ? 60 : 40, W_(f).code || C.accent);
     rimGlow = 1;
     rings.push({ x: L.cx, y: L.rimY, t: 0, life: 0.6 });
     for (const n of net) if (n.r > 0) n.vy += 220 * u * (n.r / NET_R);
@@ -1459,17 +1465,67 @@
     }
     ctx.restore();
 
-    // floor: a slightly darker plane with a hard horizon and faint perspective lines
+    // a warm overhead light falling on the hoop and the floor
+    const lx = L.cx, ly = L.by - 40 * u;
+    const light = ctx.createRadialGradient(lx, ly, 0, lx, ly, Math.max(W, H) * 0.75);
+    light.addColorStop(0, "rgba(255,150,80,0.10)");
+    light.addColorStop(0.4, "rgba(255,120,50,0.04)");
+    light.addColorStop(1, "rgba(0,0,0,0)");
+    ctx.fillStyle = light;
+    ctx.fillRect(0, 0, W, H);
+
+    // floor: a darker plane with an orange horizon line and a pool of light
     const fy = L.floorY + 8 * u;
     ctx.fillStyle = C.floor;
     ctx.fillRect(0, fy, W, H - fy);
+    const pool = ctx.createRadialGradient(L.cx, fy, 0, L.cx, fy, W * 0.5);
+    pool.addColorStop(0, "rgba(255,140,70,0.08)");
+    pool.addColorStop(1, "rgba(255,140,70,0)");
+    ctx.fillStyle = pool;
+    ctx.fillRect(0, fy, W, H - fy);
+    // huge outlined level number painted on the back wall
     ctx.save();
-    ctx.strokeStyle = C.line;
-    ctx.lineWidth = 1;
+    const big = mode === "timed" ? "60" : String(level).padStart(2, "0");
+    const bigSize = Math.min(H * 0.34, W * 0.3);
+    ctx.font = `800 ${bigSize}px ${DISPLAY}`;
+    ctx.textAlign = "left";
+    ctx.textBaseline = "alphabetic";
+    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = "rgba(255,106,26,0.14)";
+    ctx.strokeText(big, Math.max(16, W * 0.03), fy - 18 * u);
+    ctx.restore();
+
+    // hazard strip along the edge of the floor
+    ctx.save();
+    const sh = 6 * u;
     ctx.beginPath();
-    ctx.moveTo(0, Math.round(fy) + 0.5);
-    ctx.lineTo(W, Math.round(fy) + 0.5);
-    ctx.stroke();
+    ctx.rect(0, fy, W, sh);
+    ctx.clip();
+    ctx.fillStyle = "#14161a";
+    ctx.fillRect(0, fy, W, sh);
+    ctx.fillStyle = "rgba(255,106,26,0.85)";
+    for (let sx = -sh; sx < W + sh; sx += sh * 2.4) {
+      ctx.beginPath();
+      ctx.moveTo(sx, fy + sh);
+      ctx.lineTo(sx + sh, fy);
+      ctx.lineTo(sx + sh * 2.1, fy);
+      ctx.lineTo(sx + sh * 1.1, fy + sh);
+      ctx.closePath();
+      ctx.fill();
+    }
+    ctx.restore();
+
+    // a small stencilled label on the floor
+    ctx.save();
+    ctx.fillStyle = "rgba(139,142,148,0.7)";
+    ctx.font = `500 ${Math.max(8, 9 * u)}px ${MONO}`;
+    ctx.textAlign = "left";
+    ctx.textBaseline = "bottom";
+    const sector = mode === "timed" ? "TIMED RUN" : `SECTOR ${String(level).padStart(2, "0")}`;
+    ctx.fillText(`${sector} // UPLOAD BAY`, Math.max(16, W * 0.03), H - 8 * u);
+    ctx.restore();
+
+    ctx.save();
     ctx.strokeStyle = C.grid;
     ctx.beginPath();
     for (let k = -8; k <= 8; k++) {
@@ -1488,22 +1544,23 @@
     ctx.save();
     ctx.fillStyle = C.zone;
     ctx.fillRect(d.x, d.y, d.w, d.h);
-    ctx.strokeStyle = active ? C.text : C.line;
+    ctx.strokeStyle = active ? C.accent : C.line;
     ctx.lineWidth = 1;
     ctx.setLineDash(active ? [6, 4] : []);
     ctx.lineDashOffset = active ? -time * 24 : 0;
     ctx.strokeRect(Math.round(d.x) + 0.5, Math.round(d.y) + 0.5, Math.round(d.w) - 1, Math.round(d.h) - 1);
     ctx.restore();
     const inset = active ? 4 * u + Math.sin(time * 6) * 2 * u : 0;
-    cornerBrackets(d.x - 3 + inset, d.y - 3 + inset, d.w + 6 - inset * 2, d.h + 6 - inset * 2, 12 * u, C.text, 2);
+    cornerBrackets(d.x - 3 + inset, d.y - 3 + inset, d.w + 6 - inset * 2, d.h + 6 - inset * 2, 12 * u, C.accent, 2);
 
     // small technical labels in the corners
     ctx.save();
-    ctx.fillStyle = C.muted;
+    ctx.fillStyle = C.accent;
     ctx.font = `500 ${Math.max(9, 10 * u)}px ${MONO}`;
     ctx.textBaseline = "top";
     ctx.textAlign = "left";
     ctx.fillText(active ? "UPLINK // RECEIVING" : "UPLINK // READY", d.x + 12 * u, d.y + 10 * u);
+    ctx.fillStyle = C.muted;
     ctx.textAlign = "right";
     const lvl = mode === "timed" ? "TIMED" : `LV.${String(level).padStart(2, "0")}`;
     ctx.fillText(lvl, d.x + d.w - 12 * u, d.y + 10 * u);
@@ -1698,7 +1755,7 @@
     ctx.shadowOffsetY = (2 + 10 * lift) * u;
     ctx.translate(0, wt.edge * u);
     body();
-    ctx.fillStyle = f.virus ? "#000000" : C.paperEdge;
+    ctx.fillStyle = f.virus ? "#000000" : wt.code ? shade(wt.code, -0.55) : "#9e9a90";
     ctx.fill();
     ctx.restore();
 
@@ -1708,36 +1765,53 @@
       return;
     }
 
+    // Body. Plain files are real paper; weighted files are solid colour, lit from above.
+    const coded = !!wt.code;
+    const base = coded ? wt.code : null;
+    const darkInk = f.weight === "medium"; // yellow cards take dark text
+    const ink = coded ? (darkInk ? "rgba(20,16,0,0.85)" : "rgba(255,255,255,0.95)") : "#1c1c1c";
+    const faint = coded ? (darkInk ? "rgba(20,16,0,0.28)" : "rgba(255,255,255,0.32)") : "rgba(0,0,0,0.14)";
     body();
-    ctx.fillStyle = back ? C.paperBack : C.paper;
+    const g = ctx.createLinearGradient(0, -h / 2, 0, h / 2);
+    if (coded) {
+      g.addColorStop(0, shade(base, back ? -0.1 : 0.14));
+      g.addColorStop(1, shade(base, back ? -0.35 : -0.2));
+    } else {
+      g.addColorStop(0, back ? "#dcd9d1" : "#f4f2ec");
+      g.addColorStop(1, back ? "#c3c0b7" : "#d8d5cc");
+    }
+    ctx.fillStyle = g;
     ctx.fill();
-    ctx.lineWidth = wt.code ? 1.6 * u : 1;
-    ctx.strokeStyle = wt.code || C.paperLine;
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = coded ? shade(base, -0.35) : "rgba(0,0,0,0.25)";
     ctx.stroke();
 
     if (!back) {
-      // folded corner
+      // folded corner, slightly lighter, with a crease shadow
+      ctx.save();
+      ctx.shadowColor = "rgba(0,0,0,0.35)";
+      ctx.shadowBlur = 3 * u;
+      ctx.shadowOffsetX = -1 * u;
+      ctx.shadowOffsetY = 1 * u;
       ctx.beginPath();
       ctx.moveTo(w / 2 - fold, -h / 2);
       ctx.lineTo(w / 2 - fold, -h / 2 + fold);
       ctx.lineTo(w / 2, -h / 2 + fold);
       ctx.closePath();
-      ctx.fillStyle = C.paperFold;
+      ctx.fillStyle = coded ? shade(base, 0.35) : "#ffffff";
       ctx.fill();
-      ctx.lineWidth = 1;
-      ctx.strokeStyle = C.paperLine;
-      ctx.stroke();
+      ctx.restore();
 
       let top = -h / 2 + 8 * u;
-      // weight band with its label (the only colour on the card)
-      if (wt.code) {
+      // weight band: a darker strip of the card's own colour with its label and points
+      if (coded) {
         ctx.save();
         body();
         ctx.clip();
-        ctx.fillStyle = wt.code;
+        ctx.fillStyle = shade(base, -0.38);
         ctx.fillRect(-w / 2, -h / 2, w - fold, 14 * u);
         ctx.restore();
-        ctx.fillStyle = f.weight === "medium" ? "#1a1400" : "#ffffff";
+        ctx.fillStyle = "#ffffff";
         ctx.font = `700 ${6.6 * u}px ${MONO}`;
         ctx.textAlign = "left";
         ctx.textBaseline = "middle";
@@ -1745,38 +1819,63 @@
         top = -h / 2 + 20 * u;
       }
 
-      // file size readout and two text lines
-      ctx.fillStyle = C.muted;
-      ctx.font = `500 ${6.4 * u}px ${MONO}`;
+      // size readout and text lines
+      ctx.fillStyle = ink;
+      ctx.font = `600 ${6.6 * u}px ${MONO}`;
       ctx.textAlign = "left";
       ctx.textBaseline = "top";
       ctx.fillText(f.size.replace(" ", ""), -w / 2 + 6 * u, top);
-      ctx.fillStyle = C.paperLine;
+      ctx.fillStyle = faint;
       ctx.fillRect(-w / 2 + 6 * u, top + 11 * u, (w - 12 * u) * 0.8, 2.4 * u);
       ctx.fillRect(-w / 2 + 6 * u, top + 17 * u, (w - 12 * u) * 0.55, 2.4 * u);
 
-      // file type in a hairline box
+      // file type tag: its own colour on paper, a dark plate on coloured cards
       ctx.font = `700 ${7.4 * u}px ${MONO}`;
-      const tw = ctx.measureText(f.ext).width + 8 * u, th = 12 * u;
+      const tw = ctx.measureText(f.ext).width + 9 * u, th = 12.5 * u;
       const bx = -w / 2 + 6 * u, by = h / 2 - th - 6 * u;
-      ctx.strokeStyle = C.text;
-      ctx.lineWidth = 1;
-      ctx.strokeRect(bx, by, tw, th);
-      ctx.fillStyle = C.text;
+      ctx.fillStyle = coded ? "rgba(0,0,0,0.38)" : f.color;
+      ctx.fillRect(bx, by, tw, th);
+      ctx.fillStyle = "#ffffff";
       ctx.textBaseline = "middle";
-      ctx.fillText(f.ext, bx + 4 * u, by + th / 2 + 0.5 * u);
+      ctx.fillText(f.ext, bx + 4.5 * u, by + th / 2 + 0.5 * u);
+
+      // stylised decal: three short hazard stripes in the bottom-right corner
+      ctx.save();
+      body();
+      ctx.clip();
+      ctx.strokeStyle = faint;
+      ctx.lineWidth = 2 * u;
+      ctx.beginPath();
+      for (let k = 0; k < 3; k++) {
+        const sx = w / 2 - 4 * u - k * 5 * u;
+        ctx.moveTo(sx, h / 2);
+        ctx.lineTo(sx + 6 * u, h / 2 - 6 * u);
+      }
+      ctx.stroke();
+      ctx.restore();
     } else {
       // back of the sheet: fine hatching
       ctx.save();
       body();
       ctx.clip();
-      ctx.strokeStyle = C.paperLine;
+      ctx.strokeStyle = faint;
       ctx.lineWidth = 1;
       ctx.beginPath();
       for (let k = -h; k < h; k += 6 * u) { ctx.moveTo(-w / 2, k); ctx.lineTo(w / 2, k + w); }
       ctx.stroke();
       ctx.restore();
     }
+
+    // a soft top-edge highlight for a little material sheen
+    ctx.save();
+    body();
+    ctx.clip();
+    const sheen = ctx.createLinearGradient(0, -h / 2, 0, -h / 2 + 10 * u);
+    sheen.addColorStop(0, "rgba(255,255,255,0.22)");
+    sheen.addColorStop(1, "rgba(255,255,255,0)");
+    ctx.fillStyle = sheen;
+    ctx.fillRect(-w / 2, -h / 2, w, 10 * u);
+    ctx.restore();
 
     // dim the card as time runs out (colour is reserved for weight)
     if (timer !== undefined && timer < 0.3) {
@@ -1896,7 +1995,7 @@
     const dots = 22;
     const ready = info.power >= 0.12;
     ctx.save();
-    ctx.fillStyle = C.text;
+    ctx.fillStyle = C.accent;
     for (let d = 1; d <= dots; d++) {
       for (let s = 0; s < 4; s++) { vy += L.g * step; x += vx * step; y += vy * step; }
       if (y > L.floorY) break;
@@ -1928,11 +2027,11 @@
     ctx.beginPath();
     ctx.arc(f.x, f.y, pr, 0, Math.PI * 2);
     ctx.stroke();
-    ctx.strokeStyle = C.text;
+    ctx.strokeStyle = C.accent;
     ctx.beginPath();
     ctx.arc(f.x, f.y, pr, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * info.power);
     ctx.stroke();
-    ctx.fillStyle = C.text;
+    ctx.fillStyle = C.accent;
     ctx.font = `600 ${Math.max(9, 10 * u)}px ${MONO}`;
     ctx.textAlign = "center";
     ctx.textBaseline = "bottom";
@@ -1971,7 +2070,7 @@
       const pad = (18 - 10 * t) * u;
       ctx.save();
       ctx.globalAlpha = 0.25 + 0.75 * t;
-      cornerBrackets(f.x - L.cardW / 2 - pad, f.oy - L.cardH / 2 - pad, L.cardW + pad * 2, L.cardH + pad * 2, 9 * u, C.text, 1.5);
+      cornerBrackets(f.x - L.cardW / 2 - pad, f.oy - L.cardH / 2 - pad, L.cardW + pad * 2, L.cardH + pad * 2, 9 * u, C.accent, 1.5);
       ctx.restore();
     }
 
@@ -2007,7 +2106,7 @@
       const t = r.t / r.life;
       ctx.save();
       ctx.globalAlpha = (1 - t) * 0.8;
-      ctx.strokeStyle = r.virus ? C.virus : r.glass ? C.muted : C.text;
+      ctx.strokeStyle = r.virus ? C.virus : r.glass ? C.muted : r.revive ? C.good : C.accent;
       ctx.lineWidth = 1.5;
       ctx.beginPath();
       if (r.glass || r.virus) ctx.arc(r.x, r.y, 8 * u + t * (r.virus ? 50 : 32) * u, 0, Math.PI * 2);

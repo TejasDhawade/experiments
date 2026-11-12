@@ -1,53 +1,37 @@
 /* =========================================================
    File Shot — design tokens (the canvas reads these too)
 
-   Look: calm neutral base, technical type, hairlines and sharp corners.
-   Colour is reserved for meaning: file weight (blue / yellow / red),
-   viruses (lime), danger (red text) and revives (green).
+   Look: dark, realistic and stylised. A near-black base, real materials
+   for the hoop, bold colour on the files, and orange as the one accent
+   for the interface. Weight colours (blue / yellow / red), virus lime,
+   danger red and revive green each mean one thing.
    ========================================================= */
 :root {
-  --bg: #ecebe6;
-  --bg2: #e2e1dc;
-  --surface: #f6f5f1;
-  --text: #121212;
-  --muted: #6d6b64;
-  --line: #c9c7bf;
-  --hair: rgba(18, 18, 18, 0.12);
-  --accent: #121212;
-  --ink-contrast: #f6f5f1;   /* text on solid ink buttons */
-  --good: #12a150;
-  --bad: #e5352b;
-  --virus: #8fcc00;
-  --w-light: #2f6bff;
-  --w-normal: #f2c200;
-  --w-heavy: #ff3b30;
-  --scrim: rgba(236, 235, 230, 0.72);
-  --scrim-soft: rgba(236, 235, 230, 0.5);
+  --bg: #0c0d0f;
+  --bg2: #08090a;
+  --surface: #14161a;
+  --surface-2: #1b1e23;
+  --text: #ecebe6;
+  --muted: #8b8e94;
+  --line: #2a2d33;
+  --hair: rgba(236, 235, 230, 0.09);
+  --accent: #ff6a1a;          /* orange: the one interface accent */
+  --accent-2: #ff8a3d;
+  --on-accent: #0c0d0f;       /* text on orange */
+  --ink-contrast: #0c0d0f;
+  --good: #2fd27a;
+  --bad: #ff4b3e;
+  --virus: #b8f400;
+  --w-light: #3a7bff;
+  --w-normal: #f5c518;
+  --w-heavy: #e8322b;
+  --scrim: rgba(8, 9, 10, 0.8);
+  --scrim-soft: rgba(8, 9, 10, 0.55);
   --font: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-display: "Inter Tight", "Inter", system-ui, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
   --radius: 3px;
-  color-scheme: light;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #0e0f10;
-    --bg2: #0a0b0c;
-    --surface: #16181a;
-    --text: #e9e8e3;
-    --muted: #8a8d90;
-    --line: #2d3033;
-    --hair: rgba(233, 232, 227, 0.1);
-    --accent: #e9e8e3;
-    --ink-contrast: #0e0f10;
-    --good: #2fd27a;
-    --bad: #ff5147;
-    --virus: #b8f400;
-    --scrim: rgba(14, 15, 16, 0.78);
-    --scrim-soft: rgba(14, 15, 16, 0.55);
-    color-scheme: dark;
-  }
+  color-scheme: dark;
 }
 
 *,
@@ -157,6 +141,7 @@ html, body {
   color: var(--muted);
   margin-bottom: 2px;
 }
+.stat.pts b { color: var(--accent); }
 .stat.miss b { color: var(--bad); }
 .stat.bump b { animation: tick 0.35s ease-out; }
 @keyframes tick {
@@ -168,6 +153,7 @@ html, body {
   display: flex;
   align-items: center;
   gap: 8px;
+  white-space: nowrap;
   font-size: 10.5px;
   font-weight: 500;
   text-transform: uppercase;
@@ -184,7 +170,7 @@ html, body {
   display: block;
   height: 100%;
   width: 0;
-  background: var(--text);
+  background: var(--accent);
   transition: width 0.3s;
 }
 .lvbar.clock i { transition: width 0.15s linear; }
@@ -288,9 +274,8 @@ html, body {
   place-items: center;
   width: 34px;
   height: 34px;
-  border: 1px solid var(--text);
-  background: transparent !important; /* type colours are not used in this look */
-  color: var(--text);
+  border-radius: 2px;
+  color: #fff;
   font: 700 9px var(--font-mono);
 }
 .toast .info { flex: 1; min-width: 0; }
@@ -308,7 +293,7 @@ html, body {
   display: block;
   height: 100%;
   width: 0;
-  background: var(--text);
+  background: var(--accent);
   transition: width 0.9s cubic-bezier(0.3, 0.8, 0.3, 1);
 }
 .toast .check {
@@ -350,9 +335,9 @@ html, body {
   width: min(400px, 100%);
   padding: 28px 24px 22px;
   border-radius: var(--radius);
-  background: var(--surface);
+  background: linear-gradient(180deg, var(--surface-2), var(--surface));
   border: 1px solid var(--line);
-  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.12);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.5);
   text-align: center;
 }
 /* corner brackets */
@@ -362,14 +347,14 @@ html, body {
   inset: -5px;
   pointer-events: none;
   background:
-    linear-gradient(var(--text), var(--text)) top left / 14px 2px,
-    linear-gradient(var(--text), var(--text)) top left / 2px 14px,
-    linear-gradient(var(--text), var(--text)) top right / 14px 2px,
-    linear-gradient(var(--text), var(--text)) top right / 2px 14px,
-    linear-gradient(var(--text), var(--text)) bottom left / 14px 2px,
-    linear-gradient(var(--text), var(--text)) bottom left / 2px 14px,
-    linear-gradient(var(--text), var(--text)) bottom right / 14px 2px,
-    linear-gradient(var(--text), var(--text)) bottom right / 2px 14px;
+    linear-gradient(var(--accent), var(--accent)) top left / 14px 2px,
+    linear-gradient(var(--accent), var(--accent)) top left / 2px 14px,
+    linear-gradient(var(--accent), var(--accent)) top right / 14px 2px,
+    linear-gradient(var(--accent), var(--accent)) top right / 2px 14px,
+    linear-gradient(var(--accent), var(--accent)) bottom left / 14px 2px,
+    linear-gradient(var(--accent), var(--accent)) bottom left / 2px 14px,
+    linear-gradient(var(--accent), var(--accent)) bottom right / 14px 2px,
+    linear-gradient(var(--accent), var(--accent)) bottom right / 2px 14px;
   background-repeat: no-repeat;
 }
 
@@ -392,22 +377,22 @@ html, body {
   height: 46px;
   padding: 0 14px;
   border-radius: var(--radius);
-  border: 1px solid var(--text);
-  background: var(--text);
-  color: var(--ink-contrast);
-  font: 600 14.5px var(--font);
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: var(--on-accent);
+  font: 700 14.5px var(--font);
   cursor: pointer;
   transition: transform 0.12s, background 0.15s, color 0.15s, border-color 0.15s;
 }
-.cta:hover { transform: translateY(-1px); }
+.cta:hover { transform: translateY(-1px); background: var(--accent-2); border-color: var(--accent-2); }
 .cta:active { transform: translateY(0); }
 .cta.big { height: auto; min-height: 52px; font-size: 16px; }
 .cta.ghost { background: transparent; color: var(--text); border-color: var(--line); }
-.cta.ghost:hover { border-color: var(--text); }
+.cta.ghost:hover { border-color: var(--accent); background: transparent; color: var(--accent); }
 .cta.alt-good { background: var(--good); border-color: var(--good); color: #fff; }
 
 .cta:focus-visible, .btn:focus-visible, .share-row a:focus-visible, .link:focus-visible, .mode-card:focus-visible {
-  outline: 2px solid var(--text);
+  outline: 2px solid var(--accent);
   outline-offset: 3px;
 }
 
@@ -422,7 +407,7 @@ html, body {
   text-transform: uppercase;
   cursor: pointer;
 }
-.link:hover { color: var(--text); }
+.link:hover { color: var(--accent); }
 
 /* ---------- Start screen ---------- */
 .menu-card { width: min(480px, 100%); padding: 22px 30px 26px; }
@@ -435,6 +420,7 @@ html, body {
   font-size: 10px;
   color: var(--muted);
 }
+.menu-head span:first-child { color: var(--accent); }
 .mark {
   display: block;
   width: 56px;
@@ -443,6 +429,8 @@ html, body {
   fill: none;
   stroke: var(--text);
   stroke-width: 2;
+}
+.mark .hot { stroke: var(--accent); stroke-width: 3;
   stroke-linecap: square;
   stroke-linejoin: miter;
 }
@@ -465,16 +453,24 @@ html, body {
   padding: 14px 14px 16px;
   border-radius: var(--radius);
   border: 1px solid var(--line);
-  background: var(--bg);
+  background: var(--surface-2);
   color: var(--text);
   font: inherit;
   text-align: left;
   cursor: pointer;
   transition: border-color 0.15s, transform 0.15s, background 0.15s;
 }
-.mode-card:hover { border-color: var(--text); transform: translateY(-2px); }
+.mode-card:hover { border-color: var(--accent); transform: translateY(-2px); }
 .mode-card:active { transform: translateY(0); }
-.mode-card.primary { background: var(--text); color: var(--ink-contrast); border-color: var(--text); }
+.mode-card.primary {
+  background:
+    repeating-linear-gradient(135deg, rgba(0, 0, 0, 0.07) 0 8px, transparent 8px 16px),
+    var(--accent);
+  color: var(--on-accent);
+  border-color: var(--accent);
+}
+.mode-card.primary:hover { border-color: var(--accent-2); }
+.mode-card:not(.primary) .mode-top svg { color: var(--accent); }
 .mode-top {
   display: flex;
   width: 100%;
@@ -511,7 +507,7 @@ html, body {
   margin-top: 16px;
   padding: 12px 14px;
   border: 1px solid var(--hair);
-  background: var(--bg);
+  background: var(--bg2);
   text-align: left;
 }
 .how ul { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 7px; }
@@ -549,7 +545,7 @@ html, body {
   font-size: 10.5px;
   font-weight: 500;
   text-transform: uppercase;
-  color: var(--muted);
+  color: var(--accent);
 }
 .intro-card h2 { font-size: 34px; margin-top: 6px; }
 .intro-rules {
@@ -586,7 +582,8 @@ html, body {
   display: inline-block;
   margin: 18px 0 0;
   padding: 5px 10px;
-  border: 1px solid var(--text);
+  border: 1px solid var(--accent);
+  color: var(--accent);
   font-size: 10.5px;
   font-weight: 600;
   text-transform: uppercase;
@@ -629,6 +626,7 @@ html, body {
   align-items: center;
 }
 .big-score span {
+  color: var(--accent);
   font-family: var(--font-display);
   font-size: 104px;
   font-weight: 800;
@@ -653,7 +651,7 @@ html, body {
   text-transform: uppercase;
   color: var(--muted);
 }
-.best.new { border-color: var(--text); background: var(--text); color: var(--ink-contrast); }
+.best.new { border-color: var(--accent); background: var(--accent); color: var(--on-accent); }
 
 .final-stats {
   display: grid;
