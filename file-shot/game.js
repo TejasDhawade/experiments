@@ -50,9 +50,21 @@
     2: { name: "Rush hour", toPass: 8 },
     3: { name: "Heavy lifting", toPass: 8, weights: true, mix: MIX_INTRO },
     4: { name: "Deadline", toPass: 8, weights: true, mix: MIX_LATER, deadline: true, lose: true, freshStreak: true },
-    5: { name: "Quarantine", weights: true, mix: MIX_LATER, deadline: true, lose: true, viruses: true, freshStreak: true },
+    5: { name: "Quarantine", toPass: 10, weights: true, mix: MIX_LATER, deadline: true, lose: true, viruses: true, freshStreak: true },
+    6: { name: "Bundles", toPass: 10, weights: true, mix: MIX_LATER, deadline: true, lose: true, viruses: true, freshStreak: true, bundles: true },
+    7: { name: "Server busy", toPass: 12, weights: true, mix: MIX_LATER, deadline: true, lose: true, viruses: true, freshStreak: true, bundles: true, moving: true },
+    8: { name: "Bad connection", toPass: 12, weights: true, mix: MIX_LATER, deadline: true, lose: true, viruses: true, freshStreak: true, bundles: true, moving: true, shortAim: true },
+    9: { name: "Low storage", toPass: 12, weights: true, mix: MIX_LATER, deadline: true, lose: true, viruses: true, freshStreak: true, bundles: true, moving: true, shortAim: true, smallRim: true },
+    // the finale: one clock and a points target; misses no longer end the game
+    10: { name: "Final upload", weights: true, mix: MIX_LATER, deadline: true, viruses: true, freshStreak: true, bundles: true, moving: true, shortAim: true, smallRim: true, finale: true },
   };
-  const LAST_LEVEL = 5;
+  const LAST_LEVEL = 10;
+  const FINALE_SECONDS = 90;
+  const FINALE_TARGET = 40;    // points to score in level 10 to finish the game
+  const VIRUS_PENALTY = 3;     // seconds lost for touching a virus in the finale
+  const BUNDLE_CHANCE = 0.18;  // chance a new file is a bundle (levels 6+)
+  const SMALL_RIM = 0.78;      // rim size in levels 9-10
+  const AIM_VISIBLE = 0.35;    // share of the aim line shown in levels 8-10
   const DEADLINE = 8;          // seconds per plain file (weighted files use WEIGHTS[].ttl)
   const MAX_MISS_RUN = 5;      // the 6th miss in a row ends the game
   const VIRUS_LIFE = 7;        // seconds a virus sits on the floor before vanishing
@@ -74,6 +86,8 @@
     light:  { pull: 0.7,  scale: 0.82, edge: 1.4, label: "LIGHT",  code: "#3a7bff", points: 1, ttl: 10 },
     medium: { pull: 1,    scale: 1,    edge: 2.6, label: "NORMAL", code: "#f5c518", points: 2, ttl: 8 },
     heavy:  { pull: 1.38, scale: 1.26, edge: 5.5, label: "HEAVY",  code: "#e8322b", points: 3, ttl: 6 },
+    // a stack of files: pulls and expires like a heavy file, scores the sum of its parts
+    bundle: { pull: 1.38, scale: 1.1,  edge: 5.5, label: "BUNDLE", code: "",        points: 0, ttl: 6 },
   };
   const weightOf = (bytes) => (bytes < LIGHT_MAX ? "light" : bytes >= HEAVY_MIN ? "heavy" : "medium");
   const W_ = (f) => WEIGHTS[f.weight] || WEIGHTS.plain;
@@ -231,6 +245,18 @@
     return { name, ext, color: TYPE_COLORS[ext], bytes, weight: "plain", size: formatSize(bytes) };
   }
 
+  // A stack of 2-3 files, e.g. light + normal + heavy = 6 points
+  function makeBundle() {
+    const parts = pick([["light", "medium", "heavy"], ["light", "medium", "heavy"], ["medium", "heavy"], ["light", "heavy"], ["light", "medium"]]);
+    const points = parts.reduce((sum, k) => sum + WEIGHTS[k].points, 0);
+    const mb = parts.reduce((sum, k) => sum + (k === "light" ? rand(0.1, 0.9) : k === "medium" ? rand(2, 9) : rand(11, 40)), 0);
+    const bytes = Math.round(mb * 1024 * 1024);
+    return {
+      name: `bundle_${String((Math.random() * 90 + 10) | 0)}`, ext: "ZIP", color: TYPE_COLORS.ZIP,
+      bytes, size: formatSize(bytes), weight: "bundle", parts, bundlePoints: points,
+    };
+  }
+
   function makeVirusFile() {
     const [name, ext] = pick(VIRUS_NAMES);
     return { name, ext, color: "#16a34a", bytes: 0, weight: "plain", size: "??", virus: true };
@@ -315,6 +341,8 @@
       tick() { tone(1800, 1700, 0.04, "square", 0.025); },
       expire() { tone(420, 180, 0.28, "sawtooth", 0.06); noise(0.2, "lowpass", 1200, 200, 0.8, 0.08); },
       levelUp() { [523.25, 659.25, 783.99, 1046.5].forEach((f, i) => tone(f, f, 0.25, "triangle", 0.09, i * 0.09)); },
+      warn() { tone(880, 880, 0.12, "square", 0.04); tone(880, 880, 0.12, "square", 0.04, 0.3); tone(880, 880, 0.12, "square", 0.04, 0.6); },
+      win() { [523.25, 659.25, 783.99, 1046.5, 1318.5].forEach((f, i) => tone(f, f, 0.35, "triangle", 0.1, i * 0.11)); },
       glitch() { tone(220, 180, 0.08, "square", 0.03); tone(330, 140, 0.12, "sawtooth", 0.025, 0.06); },
       infect() { tone(140, 60, 0.4, "sawtooth", 0.12); noise(0.35, "bandpass", 300, 2400, 3, 0.12); tone(90, 70, 0.3, "square", 0.06, 0.05); },
       revive() { [392, 523.25, 783.99].forEach((f, i) => tone(f, f * 1.01, 0.3, "sine", 0.1, i * 0.07)); noise(0.4, "bandpass", 800, 4000, 0.7, 0.08); },
@@ -351,7 +379,8 @@
     L.cx = W / 2;
 
     // hoop
-    L.rx = 66 * u;          // rim half-width (to tube centre)
+    L.rxBase = 66 * u;      // rim half-width (to tube centre)
+    L.rx = L.rxBase * rimScale;
     L.ry = L.rx * 0.24;     // rim perspective squash
     L.tube = 4.2 * u;       // rim thickness radius
     L.netH = 92 * u;
@@ -370,6 +399,8 @@
     // drop zone card around the board
     const dzW = Math.min(W - 32, L.bw + 190 * u);
     L.dz = { x: L.cx - dzW / 2, y: L.by - dzAbove, w: dzW, h: L.rimY + 4 * u - (L.by - dzAbove) };
+    L.hoopRange = Math.max(0, Math.min((dzW - L.bw) / 2 - 6 * u, 170 * u));
+    placeHoop();
 
     // files
     L.cardW = 64 * u;
@@ -382,6 +413,42 @@
     L.capacity = clamp(Math.floor((W - 2 * L.margin) / (L.cardW * 1.75)) + 1, 2, 5);
 
     buildNet();
+  }
+
+  // The hoop unit (drop zone, backboard, rim, net) can slide sideways in levels 7+
+  let hoopShift = 0, rimScale = 1;
+  function placeHoop() {
+    L.hx = L.cx + hoopShift;
+    L.bx = L.hx - L.bw / 2;
+  }
+
+  function applyLevelGeometry() {
+    rimScale = mode === "classic" && LEVELS[level].smallRim ? SMALL_RIM : 1;
+    L.rx = L.rxBase * rimScale;
+    L.ry = L.rx * 0.24;
+    hoopShift = 0;
+    hoopPhase = "idle";
+    hoopPhaseAt = time + rand(3, 5);
+    placeHoop();
+  }
+
+  // levels 7+: warn with amber flashes, slide left and right for a moment, settle back
+  function updateHoop(dt) {
+    if (phase !== "playing" || !LV().moving) {
+      if (hoopShift !== 0) { hoopShift = Math.abs(hoopShift) < 0.5 ? 0 : hoopShift * (1 - 6 * dt); placeHoop(); }
+      return;
+    }
+    if (hoopPhase === "idle" && time >= hoopPhaseAt) {
+      hoopPhase = "warn"; hoopPhaseAt = time + 0.9; sfx.warn();
+    } else if (hoopPhase === "warn" && time >= hoopPhaseAt) {
+      hoopPhase = "move"; hoopPhaseAt = time + 1.8;
+      hoopAmp = L.hoopRange * rand(0.65, 1) * (Math.random() < 0.5 ? -1 : 1);
+    } else if (hoopPhase === "move") {
+      const t = clamp(1 - (hoopPhaseAt - time) / 1.8, 0, 1);
+      hoopShift = hoopAmp * Math.sin(Math.PI * 2 * t);
+      if (t >= 1) { hoopShift = 0; hoopPhase = "idle"; hoopPhaseAt = time + rand(4, 6.5); }
+    }
+    placeHoop();
   }
 
   // ---------- Game state ----------
@@ -397,6 +464,10 @@
   let timeLeft = TIMED_SECONDS, timeBonus = 0;
   let demoAt = 1.2;          // next attract-mode throw on the start screen
   let nextVirusAt = 0;
+  let levelPoints = 0;       // points scored in the current level (the finale target)
+  let won = false;
+  // moving hoop: idle -> warn (amber flashes) -> move -> idle
+  let hoopPhase = "idle", hoopPhaseAt = 0, hoopAmp = 0;
   let levelupAt = 0;         // when the "level complete" pause hands over to the next briefing
 
   const waiting = [];       // files sitting on the floor, ready to throw
@@ -449,7 +520,7 @@
     const t = n.r / (NET_R - 1);
     const f = 1 - 0.45 * t;
     return {
-      x: L.cx + L.rx * f * Math.cos(n.th) + n.dx,
+      x: L.hx + L.rx * f * Math.cos(n.th) + n.dx,
       y: L.rimY + L.ry * f * Math.sin(n.th) + L.netH * t + n.dy + (n.r === 0 ? rimDy : rimDy * (1 - t)),
     };
   }
@@ -475,7 +546,7 @@
   }
 
   function pushNet(f) {
-    if (Math.abs(f.x - L.cx) > L.rx + L.fr * 2) return;
+    if (Math.abs(f.x - L.hx) > L.rx + L.fr * 2) return;
     if (f.y < L.rimY - L.fr || f.y > L.rimY + L.netH + L.fr) return;
     const R = L.fr * 1.2;
     for (const n of net) {
@@ -514,9 +585,11 @@
     return bestX;
   }
 
-  function spawn(virus = false) {
-    const info = virus ? makeVirusFile() : queue.length ? queue.shift() : makeFakeFile(LV().mix);
-    if (!virus && LV().weights) info.weight = weightOf(info.bytes);
+  function spawn(virus = false, forceBundle = false) {
+    const wantBundle = forceBundle || (!virus && !queue.length && LV().bundles && Math.random() < BUNDLE_CHANCE && !waiting.some((w) => w.bundle));
+    const info = virus ? makeVirusFile() : wantBundle ? makeBundle() : queue.length ? queue.shift() : makeFakeFile(LV().mix);
+    if (wantBundle) info.bundle = true;
+    else if (!virus && LV().weights) info.weight = weightOf(info.bytes);
     const x = clamp(pickSpawnX(), L.margin, W - L.margin);
     const y = restY(info);
     const f = { ...info, ox: x, oy: y, x, y, rot: 0, state: "spawning", t: 0, born: time };
@@ -534,6 +607,10 @@
     rings.push({ x: f.x, y: f.y, t: 0, life: 0.5, virus: true });
     sfx.infect();
     shake(6);
+    if (LV().finale) {
+      timeLeft = Math.max(0, timeLeft - VIRUS_PENALTY);
+      floatText(`-${VIRUS_PENALTY}s`, f.x, f.y - L.cardH * 1.4, { size: 22 * u, color: C.danger, weight: 800, life: 1.2 });
+    }
     registerMiss("Infected!", f.x, f.y - L.cardH * 0.9);
   }
 
@@ -607,7 +684,7 @@
     const x0 = clamp(L.cx + side * rand(W * 0.18, W * 0.36), L.margin, W - L.margin);
     const y0 = restY(info);
     const T = rand(1.0, 1.12);
-    const tx = L.cx + rand(-0.25, 0.25) * L.rx, ty = L.rimY;
+    const tx = L.hx + rand(-0.25, 0.25) * L.rx, ty = L.rimY;
     const vx = (tx - x0) / T;
     const vy = (ty - y0 - 0.5 * L.g * T * T) / T;
     flying.push(makeFlying({ ...info, x: x0, y: y0, rot: 0, demo: true }, vx, vy));
@@ -677,11 +754,12 @@
     const r = successRate();
     rateEl.textContent = r === null ? "–" : r + "%";
     const timed = mode === "timed";
+    const finale = !timed && !!LEVELS[level].finale;
     const lose = !timed && !!LEVELS[level].lose;
-    const hasBar = timed || !!LEVELS[level].toPass;
-    levelNameEl.textContent = timed ? `Timed run · ${fmtClock(Math.ceil(timeLeft))}` : `Level ${level} · ${LEVELS[level].name}`;
+    const hasBar = timed || finale || !!LEVELS[level].toPass;
+    levelNameEl.textContent = levelLabel();
     levelBarEl.hidden = !hasBar || lose;
-    levelBarEl.classList.toggle("clock", timed);
+    levelBarEl.classList.toggle("clock", timed || finale);
     pipsEl.hidden = !lose;
     if (lose) {
       pipsEl.querySelectorAll("i").forEach((p, i) => p.classList.toggle("on", i < missRun));
@@ -691,11 +769,18 @@
     revivesCountEl.textContent = revives;
   }
 
+  function levelLabel() {
+    if (mode === "timed") return `Timed run · ${fmtClock(Math.ceil(timeLeft))}`;
+    if (LEVELS[level].finale) return `Level 10 · ${Math.min(levelPoints, FINALE_TARGET)}/${FINALE_TARGET} pts · ${fmtClock(Math.ceil(timeLeft))}`;
+    return `Level ${level} · ${LEVELS[level].name}`;
+  }
+
   function updateLevelBar() {
-    if (mode === "timed") {
-      const frac = clamp(timeLeft / TIMED_SECONDS, 0, 1);
+    const finale = mode === "classic" && LEVELS[level].finale;
+    if (mode === "timed" || finale) {
+      const frac = clamp(timeLeft / (finale ? FINALE_SECONDS : TIMED_SECONDS), 0, 1);
       levelFillEl.style.width = `${frac * 100}%`;
-      levelNameEl.textContent = `Timed run · ${fmtClock(Math.ceil(timeLeft))}`;
+      levelNameEl.textContent = levelLabel();
       levelBarEl.classList.toggle("low", timeLeft <= 10);
       return;
     }
@@ -751,7 +836,46 @@
         ["MISS", "Touching a virus counts as a miss. They disappear on their own."],
         ["RULES", "Deadlines, weights and the 6-misses rule still apply. Your streak starts again from zero."],
       ],
-      goal: "Final level. Survive as long as you can",
+      goal: "Upload 10 files to move on",
+    },
+    6: {
+      rules: [
+        ["STACK", "Rare bundles of 2 or 3 files appear, fanned in a stack."],
+        ["SCORE", "A bundle scores all its files at once, e.g. light + normal + heavy = 6 points."],
+        ["RISK", "It needs a heavy pull and expires on the heavy timer. Missing it costs one miss."],
+      ],
+      goal: "Upload 10 files to move on",
+    },
+    7: {
+      rules: [
+        ["MOVE", "Every few seconds the hoop slides left and right, then settles back."],
+        ["WARN", "The rim and the lamp on the backboard flash amber just before it moves."],
+        ["TIP", "Wait for it to settle, or time your shot."],
+      ],
+      goal: "Upload 12 files to move on",
+    },
+    8: {
+      rules: [
+        ["SIGNAL", "The aim line only shows the start of the arc."],
+        ["FEEL", "Judge the rest of the throw yourself. Pull distance still sets the power."],
+      ],
+      goal: "Upload 12 files to move on",
+    },
+    9: {
+      rules: [
+        ["SPACE", "The rim shrinks, so only clean shots go in."],
+        ["BONUS", "Swishes score 1 extra point."],
+      ],
+      goal: "Upload 12 files to move on",
+    },
+    10: {
+      rules: [
+        ["CLOCK", `One ${FINALE_SECONDS}-second clock. Score ${FINALE_TARGET} points before it runs out to finish the game.`],
+        ["ALL", "Every rule is on: weights, bundles, deadlines, viruses, moving hoop, short aim line and small rim."],
+        ["BONUS", `Swishes add ${SWISH_BONUS} seconds. Touching a virus takes ${VIRUS_PENALTY} seconds away.`],
+        ["SAFE", "Misses no longer end the game. Only the clock does."],
+      ],
+      goal: `Score ${FINALE_TARGET} points in ${FINALE_SECONDS} seconds`,
     },
     timed: {
       rules: [
@@ -765,6 +889,7 @@
   };
 
   function showIntro() {
+    applyLevelGeometry();
     const key = mode === "timed" ? "timed" : level;
     const info = INTROS[key];
     $("introKicker").textContent = mode === "timed" ? "Timed run" : `Level ${level} of ${LAST_LEVEL}`;
@@ -782,7 +907,7 @@
       list.appendChild(li);
     }
     $("introGoal").textContent = info.goal;
-    $("introStart").textContent = mode === "timed" ? "Start run" : level === 1 ? "Start level" : `Start level ${level}`;
+    $("introStart").textContent = mode === "timed" ? "Start run" : level === 1 ? "Start level" : LEVELS[level].finale ? "Start the final upload" : `Start level ${level}`;
     phase = "intro";
     updateHud();
     updateLevelBar();
@@ -797,6 +922,9 @@
     missRun = 0;
     // from level 4 on, every level starts with a fresh streak
     if (mode === "classic" && LEVELS[level].freshStreak) streak = 0;
+    levelPoints = 0;
+    if (mode === "classic" && LEVELS[level].finale) timeLeft = FINALE_SECONDS;
+    applyLevelGeometry();
     nextSpawnAt = time + 0.4;
     nextVirusAt = time + 2.5;
     phase = "playing";
@@ -832,31 +960,33 @@
 
     // attract-mode throws on the start screen: just the swish, no score
     if (f.demo || (phase !== "playing" && phase !== "levelup")) {
-      rings.push({ x: L.cx, y: L.rimY, t: 0, life: 0.6 });
+      rings.push({ x: L.hx, y: L.rimY, t: 0, life: 0.6 });
       for (const n of net) if (n.r > 0) n.vy += 220 * u * (n.r / NET_R);
-      confetti(L.cx, L.rimY, 18);
+      confetti(L.hx, L.rimY, 18);
       return;
     }
 
-    const pts = W_(f).points;
+    let pts = f.bundlePoints || W_(f).points;
+    if (clean && LV().smallRim) pts += 1; // low storage: swishes earn a bonus point
     uploaded++;
     points += pts;
+    levelPoints += pts;
     levelUploads++;
     streak++;
     bestStreak = Math.max(bestStreak, streak);
     missRun = 0;
 
     if (clean) swishes++;
-    const label = f.banked ? "Bank shot!" : clean ? "Swish!" : pick(["Nice!", "Rattled in!", "Got it!"]);
-    floatText(`+${pts}`, L.cx, L.rimY - 30 * u, { size: (34 + pts * 5) * u, color: W_(f).code || C.accent, life: 1.1 });
-    floatText(label, L.cx, L.rimY - 74 * u, { size: 22 * u, color: C.text, weight: 700, life: 1.2 });
+    const label = f.bundle ? "Bundle uploaded" : f.banked ? "Bank shot!" : clean ? (LV().smallRim ? "Swish +1" : "Swish!") : pick(["Nice!", "Rattled in!", "Got it!"]);
+    floatText(`+${pts}`, L.hx, L.rimY - 30 * u, { size: (34 + pts * 5) * u, color: W_(f).code || C.accent, life: 1.1 });
+    floatText(label, L.hx, L.rimY - 74 * u, { size: 22 * u, color: C.text, weight: 700, life: 1.2 });
     if (streak >= 3) floatText(`Streak ×${streak}`, L.cx, L.rimY + L.netH + 34 * u, { size: 17 * u, color: C.text, weight: 700, life: 1.4 });
 
-    // timed run: clean swishes buy a little more time
-    if (mode === "timed" && clean) {
+    // timed run and the finale: clean swishes buy a little more time
+    if ((mode === "timed" || LV().finale) && clean) {
       timeLeft += SWISH_BONUS;
       timeBonus += SWISH_BONUS;
-      floatText(`+${SWISH_BONUS}s`, L.cx + L.rx + 34 * u, L.rimY - 40 * u, { size: 22 * u, color: C.text, weight: 800, life: 1.2 });
+      floatText(`+${SWISH_BONUS}s`, L.hx + L.rx + 34 * u, L.rimY - 40 * u, { size: 22 * u, color: C.text, weight: 800, life: 1.2 });
       sfx.bonus();
     }
 
@@ -871,9 +1001,9 @@
     updateHud();
     bump(scorePill.querySelector(".stat.pts"));
 
-    confetti(L.cx, L.rimY, clean ? 60 : 40, W_(f).code || C.accent);
+    confetti(L.hx, L.rimY, clean ? 60 : 40, W_(f).code || C.accent);
     rimGlow = 1;
-    rings.push({ x: L.cx, y: L.rimY, t: 0, life: 0.6 });
+    rings.push({ x: L.hx, y: L.rimY, t: 0, life: 0.6 });
     for (const n of net) if (n.r > 0) n.vy += 220 * u * (n.r / NET_R);
     shake(clean ? 5 : 3);
     sfx.swish();
@@ -882,6 +1012,7 @@
 
     const cfg = LEVELS[level];
     if (mode === "classic" && phase === "playing" && cfg.toPass && levelUploads >= cfg.toPass) completeLevel();
+    if (mode === "classic" && phase === "playing" && cfg.finale && levelPoints >= FINALE_TARGET) winGame();
   }
 
   function onMiss(f) {
@@ -945,7 +1076,7 @@
     revivesUsed++;
     missRun = 0;
     floatText("Revived", L.cx, L.rimY - 60 * u, { size: 34 * u, color: C.good, weight: 800, life: 1.6 });
-    rings.push({ x: L.cx, y: L.rimY, t: 0, life: 0.9, revive: true });
+    rings.push({ x: L.hx, y: L.rimY, t: 0, life: 0.9, revive: true });
     confetti(L.cx, L.rimY + L.netH, 40);
     sfx.revive();
     shake(4);
@@ -994,6 +1125,7 @@
     const pts = `${points} point${points === 1 ? "" : "s"}`;
     const files = `${uploaded} file${uploaded === 1 ? "" : "s"}`;
     if (mode === "timed") return `I scored ${pts} (${files} uploaded) in a ${TIMED_SECONDS}-second timed run in File Shot 🏀 Can you beat me?`;
+    if (won) return `I finished all 10 levels of File Shot with ${pts} (${files} uploaded, ${r === null ? 0 : r}% success) 🏀 Can you beat me?`;
     return `I scored ${pts} (${files} uploaded, ${r === null ? 0 : r}% success) in File Shot 🏀 Can you beat me?`;
   }
 
@@ -1034,7 +1166,7 @@
     mode = m;
     clearBoard();
     uploaded = 0; missed = 0; streak = 0; bestStreak = 0; missRun = 0; points = 0;
-    revives = 0; revivesUsed = 0; swishes = 0;
+    revives = 0; revivesUsed = 0; swishes = 0; levelPoints = 0; won = false;
     level = 1; levelUploads = 0; levelStart = time; gameStart = time;
     timeLeft = TIMED_SECONDS; timeBonus = 0;
     over = false;
@@ -1057,6 +1189,8 @@
 
   function exitToMenu() {
     clearBoard();
+    level = 1;
+    applyLevelGeometry();
     phase = "menu";
     over = false;
     demoAt = time + 1;
@@ -1066,13 +1200,19 @@
     showScreen("menu");
   }
 
+  function winGame() {
+    won = true;
+    sfx.win();
+    confetti(L.hx, L.rimY, 120, C.accent);
+    endGame();
+  }
+
   function endGame() {
     over = true;
     phase = "over";
     if (held) { held = null; drag = null; canvas.style.cursor = "default"; }
     for (const f of waiting.splice(0)) poofs.push({ f, x: f.x, y: f.y, rot: f.rot, t: 0, quiet: true });
-    sfx.gameOver();
-    shake(6);
+    if (!won) { sfx.gameOver(); shake(6); }
 
     const timed = mode === "timed";
     const prevBest = timed ? bestTimed : best;
@@ -1085,8 +1225,8 @@
     const secs = Math.round(time - gameStart);
 
     const played = fmtClock(secs);
-    $("overKicker").textContent = `${timed ? "Time's up" : "Game over"} · ${played}`;
-    $("overVerdict").textContent = verdict();
+    $("overKicker").textContent = `${won ? "Upload complete" : timed || LEVELS[level].finale ? "Time's up" : "Game over"} · ${played}`;
+    $("overVerdict").textContent = won ? pick(["All files delivered.", "Zero data loss.", "Upload complete.", "Sync legend."]) : verdict();
     $("finalPoints").textContent = "0";
     $("finalPoints").dataset.target = points;
     $("finalUnit").textContent = points === 1 ? "point" : "points";
@@ -1197,7 +1337,7 @@
   // ---------- Physics ----------
   function rimCollide(f) {
     const min = L.fr + L.tube;
-    for (const ex of [L.cx - L.rx, L.cx + L.rx]) {
+    for (const ex of [L.hx - L.rx, L.hx + L.rx]) {
       const ey = L.rimY + rimDy;
       const dx = f.x - ex, dy = f.y - ey;
       const d2 = dx * dx + dy * dy;
@@ -1258,7 +1398,7 @@
     f.vy += L.g * dt;
     if (f.scored && f.y > L.rimY && f.y < L.rimY + L.netH) {
       // the net catches and centres the file
-      f.vx += (L.cx - f.x) * 9 * dt;
+      f.vx += (L.hx - f.x) * 9 * dt;
       f.vx *= 1 - 3 * dt;
       f.vy *= 1 - 2.4 * dt;
     }
@@ -1284,7 +1424,7 @@
     if (f.aboveRim && !f.behind) {
       rimCollide(f);
       if (!f.scored && prevY < L.rimY && f.y >= L.rimY &&
-          f.x > L.cx - L.rx + L.tube && f.x < L.cx + L.rx - L.tube) {
+          f.x > L.hx - L.rx + L.tube && f.x < L.hx + L.rx - L.tube) {
         onScore(f);
       }
       pushNet(f);
@@ -1357,10 +1497,11 @@
       demoAt = time + rand(1.8, 2.6);
     }
 
-    if (phase === "playing" && mode === "timed") {
+    if (phase === "playing" && (mode === "timed" || LV().finale)) {
       timeLeft -= dt;
       if (timeLeft <= 0) { timeLeft = 0; updateLevelBar(); endGame(); }
     }
+    updateHoop(dt);
 
     if (phase === "playing") {
       const cfg = LV();
@@ -1635,7 +1776,14 @@
     ctx.strokeStyle = C.paint;
     ctx.strokeRect(x + inset, y + inset, w - inset * 2, h - inset * 2);
     const tw = 92 * u, th = 66 * u;
-    ctx.strokeRect(L.cx + sx - tw / 2, y + h - inset - th - 4 * u, tw, th);
+    ctx.strokeRect(L.hx + sx - tw / 2, y + h - inset - th - 4 * u, tw, th);
+
+    // status lamp on the top of the frame: amber while the hoop is about to move or moving
+    if (LV().moving && phase !== "menu") {
+      const on = hoopPhase === "move" || (hoopPhase === "warn" && Math.sin(time * 28) > 0);
+      ctx.fillStyle = on ? "#ffb020" : "#3a2a10";
+      ctx.fillRect(L.hx + sx - 9 * u, y - 4 * u, 18 * u, 4 * u);
+    }
 
     // mounting bolts
     ctx.fillStyle = C.metalLo;
@@ -1650,16 +1798,16 @@
     const w = 26 * u;
     const top = L.by + L.bh - 14 * u;
     const bottom = L.rimY - L.ry + rimDy + 1 * u;
-    const g = ctx.createLinearGradient(L.cx - w / 2, 0, L.cx + w / 2, 0);
+    const g = ctx.createLinearGradient(L.hx - w / 2, 0, L.hx + w / 2, 0);
     g.addColorStop(0, "#1d1f21");
     g.addColorStop(0.5, "#3a3d40");
     g.addColorStop(1, "#1d1f21");
     ctx.fillStyle = g;
     ctx.beginPath();
-    ctx.moveTo(L.cx - w / 2, top);
-    ctx.lineTo(L.cx + w / 2, top);
-    ctx.lineTo(L.cx + w * 0.3, bottom);
-    ctx.lineTo(L.cx - w * 0.3, bottom);
+    ctx.moveTo(L.hx - w / 2, top);
+    ctx.lineTo(L.hx + w / 2, top);
+    ctx.lineTo(L.hx + w * 0.3, bottom);
+    ctx.lineTo(L.hx - w * 0.3, bottom);
     ctx.closePath();
     ctx.fill();
   }
@@ -1671,17 +1819,18 @@
     ctx.save();
     ctx.lineCap = "butt";
     ctx.beginPath();
-    ctx.ellipse(L.cx, y + 1.4 * u, L.rx, L.ry, 0, a0, a1);
+    ctx.ellipse(L.hx, y + 1.4 * u, L.rx, L.ry, 0, a0, a1);
     ctx.lineWidth = lw + 1.5 * u;
     ctx.strokeStyle = "#6e2a0f";
     ctx.stroke();
     ctx.beginPath();
-    ctx.ellipse(L.cx, y, L.rx, L.ry, 0, a0, a1);
+    ctx.ellipse(L.hx, y, L.rx, L.ry, 0, a0, a1);
     ctx.lineWidth = lw;
-    ctx.strokeStyle = front ? C.rim : C.rimBack;
+    const warning = hoopPhase === "warn" && Math.sin(time * 28) > 0;
+    ctx.strokeStyle = warning ? "#ffb020" : front ? C.rim : C.rimBack;
     ctx.stroke();
     ctx.beginPath();
-    ctx.ellipse(L.cx, y - L.tube * 0.5, L.rx, L.ry, 0, a0, a1);
+    ctx.ellipse(L.hx, y - L.tube * 0.5, L.rx, L.ry, 0, a0, a1);
     ctx.lineWidth = 1.1 * u;
     ctx.strokeStyle = `rgba(255,226,200,${(front ? 0.55 : 0.25) + 0.35 * rimGlow})`;
     ctx.stroke();
@@ -1723,6 +1872,22 @@
   // A paper file card. Weight shows as a coloured band and outline; `flip` tumbles it in 3D;
   // `timer` (0..1) draws the deadline frame around the card.
   function drawFile(f, x, y, scale, rot, flip, alpha, lift, timer) {
+    if (f.bundle && f.parts) {
+      // a fanned stack: lighter files behind, the heaviest in front carrying the bundle label
+      const parts = f.parts, n = parts.length;
+      const sc = scale * WEIGHTS.bundle.scale;
+      for (let i = 0; i < n; i++) {
+        const k = n - 1 - i;
+        const dx = -k * 7 * u * sc, dy = -k * 6 * u * sc;
+        const cs = Math.cos(rot), sn = Math.sin(rot);
+        const card = { ...f, bundle: false, parts: null, weight: parts[i],
+          labelText: i === n - 1 ? `BUNDLE ${f.bundlePoints}P` : null };
+        const partScale = sc / WEIGHTS[parts[i]].scale; // keep every card in the stack the same size
+        drawFile(card, x + dx * cs - dy * sn, y + dx * sn + dy * cs, partScale, rot - k * 0.06, flip, alpha,
+          i === n - 1 ? lift : 0.05, i === n - 1 ? timer : undefined);
+      }
+      return;
+    }
     const w = L.cardW, h = L.cardH, fold = 13 * u, r = 3 * u;
     const wt = W_(f);
     scale *= wt.scale;
@@ -1815,7 +1980,7 @@
         ctx.font = `700 ${6.6 * u}px ${MONO}`;
         ctx.textAlign = "left";
         ctx.textBaseline = "middle";
-        ctx.fillText(`${wt.label} ${wt.points}P`, -w / 2 + 5 * u, -h / 2 + 7.4 * u);
+        ctx.fillText(f.labelText || `${wt.label} ${wt.points}P`, -w / 2 + 5 * u, -h / 2 + 7.4 * u);
         top = -h / 2 + 20 * u;
       }
 
@@ -1992,17 +2157,25 @@
     const v = launchVelocity(f, info);
     let x = f.x, y = f.y, vx = v.vx, vy = v.vy;
     const step = 1 / 120;
-    const dots = 22;
+    const short = LV().shortAim;
+    const dots = short ? Math.ceil(22 * AIM_VISIBLE) : 22; // bad connection: only the start of the arc
     const ready = info.power >= 0.12;
     ctx.save();
     ctx.fillStyle = C.accent;
     for (let d = 1; d <= dots; d++) {
       for (let s = 0; s < 4; s++) { vy += L.g * step; x += vx * step; y += vy * step; }
       if (y > L.floorY) break;
-      const t = d / dots;
-      ctx.globalAlpha = (1 - t) * (ready ? 0.9 : 0.3);
+      const t = short ? d / 22 : d / dots;
+      ctx.globalAlpha = (1 - t) * (ready ? 0.9 : 0.3) * (short && d === dots && Math.random() < 0.3 ? 0.2 : 1);
       const sz = (3.4 - 1.8 * t) * u;
       ctx.fillRect(x - sz / 2, y - sz / 2, sz, sz);
+      if (short && d === dots && ready) {
+        ctx.globalAlpha = 0.8;
+        ctx.font = `600 ${Math.max(8, 9 * u)}px ${MONO}`;
+        ctx.textAlign = "left";
+        ctx.textBaseline = "middle";
+        ctx.fillText("SIGNAL LOST", x + 8 * u, y);
+      }
     }
     ctx.restore();
 
@@ -2041,7 +2214,7 @@
 
   function fileLayer(f) {
     if (f.behind) return 0;
-    if (f.aboveRim && Math.abs(f.x - L.cx) < L.rx + L.fr * 2.2 &&
+    if (f.aboveRim && Math.abs(f.x - L.hx) < L.rx + L.fr * 2.2 &&
         f.y > L.rimY - L.fr * 3.5 && f.y < L.rimY + L.netH + L.fr) return 1;
     return 2;
   }
@@ -2337,6 +2510,10 @@
     beginLevel: () => beginLevel(),
     testScore: (weight) => onScore({ ...makeFakeFile(), weight: weight || (LV().weights ? "medium" : "plain"), rimHits: 0, banked: false }),
     testMiss: () => registerMiss("Missed", L.cx, L.rimY + L.netH),
+    testBundle: () => { spawn(false, true); return waiting[waiting.length - 1]; },
+    get hoopShift() { return hoopShift; }, get hoopPhase() { return hoopPhase; }, get rx() { return L.rx; },
+    get levelPoints() { return levelPoints; }, get won() { return won; },
+    scoreFile: (f) => onScore({ ...f, rimHits: 0, banked: false }),
   };
 
   const STEP = 1 / 120;
