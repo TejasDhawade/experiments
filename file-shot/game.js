@@ -432,7 +432,8 @@
     placeHoop();
   }
 
-  // levels 7+: warn with amber flashes, slide left and right for a moment, settle back
+  // levels 7+: warn with amber flashes, slide left and right for a moment, then come to rest
+  // on the left, on the right or in the centre (never the same spot twice in a row)
   function updateHoop(dt) {
     if (phase !== "playing" || !LV().moving) {
       if (hoopShift !== 0) { hoopShift = Math.abs(hoopShift) < 0.5 ? 0 : hoopShift * (1 - 6 * dt); placeHoop(); }
@@ -442,11 +443,16 @@
       hoopPhase = "warn"; hoopPhaseAt = time + 0.9; sfx.warn();
     } else if (hoopPhase === "warn" && time >= hoopPhaseAt) {
       hoopPhase = "move"; hoopPhaseAt = time + 1.8;
-      hoopAmp = L.hoopRange * rand(0.65, 1) * (Math.random() < 0.5 ? -1 : 1);
+      const spots = [-0.8, 0, 0.8].map((k) => k * L.hoopRange).filter((x) => Math.abs(x - hoopShift) > 1);
+      hoopFrom = hoopShift;
+      hoopTo = pick(spots);
+      hoopAmp = L.hoopRange * rand(0.35, 0.6) * (Math.random() < 0.5 ? -1 : 1);
     } else if (hoopPhase === "move") {
       const t = clamp(1 - (hoopPhaseAt - time) / 1.8, 0, 1);
-      hoopShift = hoopAmp * Math.sin(Math.PI * 2 * t);
-      if (t >= 1) { hoopShift = 0; hoopPhase = "idle"; hoopPhaseAt = time + rand(4, 6.5); }
+      const ease = t * t * (3 - 2 * t);
+      // travel to the new spot with a side-to-side wobble that dies out as it arrives
+      hoopShift = clamp(lerp(hoopFrom, hoopTo, ease) + hoopAmp * Math.sin(Math.PI * 2 * t) * (1 - t), -L.hoopRange, L.hoopRange);
+      if (t >= 1) { hoopShift = hoopTo; hoopPhase = "idle"; hoopPhaseAt = time + rand(4, 6.5); }
     }
     placeHoop();
   }
@@ -467,7 +473,7 @@
   let levelPoints = 0;       // points scored in the current level (the finale target)
   let won = false;
   // moving hoop: idle -> warn (amber flashes) -> move -> idle
-  let hoopPhase = "idle", hoopPhaseAt = 0, hoopAmp = 0;
+  let hoopPhase = "idle", hoopPhaseAt = 0, hoopAmp = 0, hoopFrom = 0, hoopTo = 0;
   let levelupAt = 0;         // when the "level complete" pause hands over to the next briefing
 
   const waiting = [];       // files sitting on the floor, ready to throw
