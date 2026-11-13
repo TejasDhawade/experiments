@@ -28,7 +28,7 @@
 
    Streaks reset at the start of level 4 and level 5.
 
-   Revives: every 10 uploads in a row earns one. When the game would end,
+   Revives: every 5 uploads in a row earns one. When the game would end,
    the player is asked whether to use one.
 
    Everything is drawn on one <canvas>. The scene fakes depth:
@@ -72,7 +72,7 @@
     ["free_robux", "EXE"], ["totally_not_a_virus", "EXE"], ["invoice_URGENT", "SCR"],
     ["crack_v2", "EXE"], ["FREE_iPhone", "BAT"], ["hot_singles", "SCR"], ["urgent_update", "BAT"],
   ];
-  const REVIVE_EVERY = 10;     // uploads in a row per revive
+  const REVIVE_EVERY = 5;      // uploads in a row per revive
   const TIMED_SECONDS = 60;
   const SWISH_BONUS = 2;       // seconds added for a clean swish in a timed run
 
@@ -822,7 +822,7 @@
         [W_TAG("heavy"), "6 seconds. Big points, little time."],
         ["MISS", "Files that run out of time count as missed."],
         ["RISK", "Miss 6 in a row and the game ends."],
-        ["REVIVE", "Every 10 uploads in a row earns a revive. Your streak starts again from zero here."],
+        ["REVIVE", `Every ${REVIVE_EVERY} uploads in a row earns a revive. Your streak starts again from zero here.`],
       ],
       goal: "Upload 8 files to move on",
     },
@@ -986,7 +986,7 @@
       sfx.bonus();
     }
 
-    // classic: every 10 in a row earns a revive
+    // classic: every REVIVE_EVERY uploads in a row earns a revive
     if (mode === "classic" && streak % REVIVE_EVERY === 0) {
       revives++;
       floatText("Revive earned", L.cx, L.rimY + L.netH + 60 * u, { size: 20 * u, color: C.good, weight: 800, life: 1.8 });

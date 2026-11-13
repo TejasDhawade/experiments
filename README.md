@@ -27,7 +27,7 @@ A browser game that turns a file upload screen into basketball. Drag a file card
   9. **Low storage:** the rim shrinks, and swishes score 1 bonus point.
   10. **Final upload:** everything on, one 90-second clock and a target of 40 points. Swishes add 2 seconds, touching a virus takes 3 away, and misses no longer end the game. Hit the target to finish the game.
 
-  Every 10 uploads in a row earns a **revive**. When you'd lose, you can choose to spend one and keep going.
+  Every 5 uploads in a row earns a **revive**. When you'd lose, you can choose to spend one and keep going.
 - **Timed run:** 60 seconds on one clock. Score as many points as you can; clean swishes add 2 seconds.
 
 Your score is in points; best scores are saved on your device.
