@@ -28,7 +28,7 @@
 
    Streaks reset at the start of level 4 and level 5.
 
-   Revives: every 5 uploads in a row earns one. When the game would end,
+   Revives: every 5 uploads in a row earns one, up to 4 held at once. When the game would end,
    the player is asked whether to use one.
 
    Everything is drawn on one <canvas>. The scene fakes depth:
@@ -73,6 +73,7 @@
     ["crack_v2", "EXE"], ["FREE_iPhone", "BAT"], ["hot_singles", "SCR"], ["urgent_update", "BAT"],
   ];
   const REVIVE_EVERY = 5;      // uploads in a row per revive
+  const MAX_REVIVES = 4;       // most revives a player can hold (reached at 20 in a row)
   const TIMED_SECONDS = 60;
   const SWISH_BONUS = 2;       // seconds added for a clean swish in a timed run
 
@@ -822,7 +823,7 @@
         [W_TAG("heavy"), "6 seconds. Big points, little time."],
         ["MISS", "Files that run out of time count as missed."],
         ["RISK", "Miss 6 in a row and the game ends."],
-        ["REVIVE", `Every ${REVIVE_EVERY} uploads in a row earns a revive. Your streak starts again from zero here.`],
+        ["REVIVE", `Every ${REVIVE_EVERY} uploads in a row earns a revive, up to ${MAX_REVIVES}. Your streak starts again from zero here.`],
       ],
       goal: "Upload 8 files to move on",
     },
@@ -987,11 +988,16 @@
     }
 
     // classic: every REVIVE_EVERY uploads in a row earns a revive
+    // (up to MAX_REVIVES held at once)
     if (mode === "classic" && streak % REVIVE_EVERY === 0) {
-      revives++;
-      floatText("Revive earned", L.cx, L.rimY + L.netH + 60 * u, { size: 20 * u, color: C.good, weight: 800, life: 1.8 });
-      sfx.earn();
-      setTimeout(() => bump(revivesEl), 0);
+      if (revives < MAX_REVIVES) {
+        revives++;
+        floatText("Revive earned", L.cx, L.rimY + L.netH + 60 * u, { size: 20 * u, color: C.good, weight: 800, life: 1.8 });
+        sfx.earn();
+        setTimeout(() => bump(revivesEl), 0);
+      } else {
+        floatText(`Revives full (${MAX_REVIVES})`, L.cx, L.rimY + L.netH + 60 * u, { size: 18 * u, color: C.muted, weight: 700, life: 1.4 });
+      }
     }
 
     updateHud();
