@@ -64,7 +64,7 @@
   const VIRUS_PENALTY = 3;     // seconds lost for touching a virus in the finale
   const BUNDLE_CHANCE = 0.18;  // chance a new file is a bundle (levels 6+)
   const SMALL_RIM = 0.78;      // rim size in levels 9-10
-  const AIM_VISIBLE = 0.2;     // share of the aim line shown in levels 8-10 (it fades out within it)
+  const AIM_VISIBLE = 0.45;    // share of the aim line shown in levels 8-10 (it fades out within it)
   const DEADLINE = 8;          // seconds per plain file (weighted files use WEIGHTS[].ttl)
   const MAX_MISS_RUN = 5;      // the 6th miss in a row ends the game
   const VIRUS_LIFE = 7;        // seconds a virus sits on the floor before vanishing
@@ -2169,7 +2169,7 @@
       if (y > L.floorY) break;
       const t = d / dots;
       // bad connection: the short line fades all the way out; the normal line fades gently
-      const fade = short ? Math.pow(1 - (d - 1) / dots, 1.6) : 1 - t;
+      const fade = short ? Math.pow(1 - (d - 1) / dots, 1.15) : 1 - t;
       ctx.globalAlpha = fade * (ready ? 0.9 : 0.3);
       const sz = (3.4 - 1.8 * (short ? d / 22 : t)) * u;
       ctx.fillRect(x - sz / 2, y - sz / 2, sz, sz);
