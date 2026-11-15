@@ -2452,6 +2452,15 @@
   updateHud();
   exitToMenu(); // open on the start screen
 
+  // Testing shortcut: a link ending in #level8 (any of 1-10) skips the menu and opens that level's briefing
+  const jump = location.hash.match(/^#level-?(\d{1,2})$/i);
+  if (jump && +jump[1] >= 1 && +jump[1] <= LAST_LEVEL) {
+    startGame("classic");
+    level = +jump[1];
+    levelUploads = 0;
+    showIntro();
+  }
+
   // a tiny hook for automated checks
   window.__fileShot = {
     get uploaded() { return uploaded; }, get points() { return points; }, get streak() { return streak; }, get missed() { return missed; }, get level() { return level; },
