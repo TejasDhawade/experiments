@@ -91,15 +91,10 @@ html, body {
 .hud h1 {
   margin: 0;
   font-family: var(--font-display);
-  font-size: clamp(26px, 4vw, 38px);
+  font-size: clamp(22px, 3vw, 30px);
   font-weight: 700;
   letter-spacing: -0.03em;
   line-height: 1.05;
-}
-.hud-left p {
-  margin: 6px 0 0;
-  font-size: clamp(13px, 1.5vw, 15px);
-  color: var(--muted);
 }
 
 .hud-right {
@@ -112,7 +107,7 @@ html, body {
 .pill {
   display: inline-flex;
   align-items: stretch;
-  padding: 8px 4px;
+  padding: 10px 6px;
   border-radius: var(--radius);
   background: var(--surface);
   border: 1px solid var(--line);
@@ -122,8 +117,8 @@ html, body {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  min-width: 68px;
-  padding: 0 12px;
+  min-width: 72px;
+  padding: 0 14px;
 }
 .stat + .stat { border-left: 1px solid var(--hair); }
 .stat b {
@@ -206,7 +201,7 @@ html, body {
 .revives b { font-variant-numeric: tabular-nums; }
 .revives.bump { animation: tick 0.35s ease-out; }
 
-.actions { display: flex; gap: 6px; }
+.actions { display: flex; gap: 8px; }
 
 .btn {
   display: inline-flex;
@@ -257,8 +252,8 @@ html, body {
 .toast {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 9px 11px;
+  gap: 12px;
+  padding: 11px 13px;
   border-radius: var(--radius);
   background: var(--surface);
   border: 1px solid var(--line);
@@ -332,8 +327,8 @@ html, body {
 
 .card {
   position: relative;
-  width: min(400px, 100%);
-  padding: 28px 24px 22px;
+  width: min(420px, 100%);
+  padding: 36px 32px 30px;
   border-radius: var(--radius);
   background: linear-gradient(180deg, var(--surface-2), var(--surface));
   border: 1px solid var(--line);
@@ -366,16 +361,16 @@ html, body {
   letter-spacing: -0.03em;
   text-wrap: balance;
 }
-.tagline { margin: 8px 0 0; font-size: 14.5px; line-height: 1.5; color: var(--muted); text-wrap: balance; }
+.tagline { margin: 12px 0 0; font-size: 14.5px; line-height: 1.5; color: var(--muted); text-wrap: balance; }
 
-.menu-buttons { display: flex; flex-direction: column; gap: 10px; margin-top: 22px; }
-.menu-row { display: flex; gap: 10px; }
+.menu-buttons { display: flex; flex-direction: column; gap: 12px; margin-top: 28px; }
+.menu-row { display: flex; gap: 14px; }
 .menu-row .cta { flex: 1; }
 
 /* buttons: solid ink for the main action, hairline for the rest */
 .cta {
-  height: 46px;
-  padding: 0 14px;
+  height: 48px;
+  padding: 0 18px;
   border-radius: var(--radius);
   border: 1px solid var(--accent);
   background: var(--accent);
@@ -410,12 +405,12 @@ html, body {
 .link:hover { color: var(--accent); }
 
 /* ---------- Start screen ---------- */
-.menu-card { width: min(480px, 100%); padding: 22px 30px 26px; }
+.menu-card { width: min(540px, 100%); padding: 28px 44px 34px; }
 .menu-head {
   display: flex;
   justify-content: space-between;
-  padding-bottom: 12px;
-  margin-bottom: 26px;
+  padding-bottom: 14px;
+  margin-bottom: 40px;
   border-bottom: 1px solid var(--hair);
   font-size: 10px;
   color: var(--muted);
@@ -425,7 +420,7 @@ html, body {
   display: block;
   width: 56px;
   height: 56px;
-  margin: 0 auto 16px;
+  margin: 0 auto 22px;
   fill: none;
   stroke: var(--text);
   stroke-width: 2;
@@ -434,14 +429,14 @@ html, body {
   stroke-linecap: square;
   stroke-linejoin: miter;
 }
-.menu-card h2 { font-size: 42px; letter-spacing: -0.04em; }
-.menu-card .tagline { margin-top: 8px; }
+.menu-card h2 { font-size: 48px; letter-spacing: -0.04em; }
+.menu-card .tagline { margin-top: 12px; }
 
 .mode-cards {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 12px;
-  margin-top: 28px;
+  gap: 16px;
+  margin-top: 44px;
 }
 .mode-card {
   position: relative;
@@ -450,7 +445,7 @@ html, body {
   align-items: flex-start;
   gap: 4px;
   min-width: 0;
-  padding: 14px 14px 16px;
+  padding: 20px 20px 24px;
   border-radius: var(--radius);
   border: 1px solid var(--line);
   background: var(--surface-2);
@@ -476,7 +471,7 @@ html, body {
   width: 100%;
   justify-content: space-between;
   align-items: flex-start;
-  margin-bottom: 18px;
+  margin-bottom: 28px;
 }
 .mode-top svg {
   width: 30px;
@@ -490,7 +485,7 @@ html, body {
 .mode-code { font-size: 9.5px; opacity: 0.6; }
 .mode-title { font-family: var(--font-display); font-size: 19px; font-weight: 700; letter-spacing: -0.02em; }
 .mode-meta { font-size: 10px; opacity: 0.7; text-transform: uppercase; }
-.mode-desc { margin-top: 6px; font-size: 12.5px; line-height: 1.45; opacity: 0.75; }
+.mode-desc { margin-top: 10px; font-size: 12.5px; line-height: 1.45; opacity: 0.75; }
 .mode-go {
   position: absolute;
   right: 14px;
@@ -499,18 +494,18 @@ html, body {
   transition: transform 0.15s;
 }
 .mode-card:hover .mode-go { transform: translateX(3px); }
-.mode-card .mode-desc { padding-right: 16px; }
+.mode-card .mode-desc { padding-right: 20px; }
 
-.menu-card .menu-row { margin-top: 12px; }
+.menu-card .menu-row { margin-top: 16px; }
 
 .how {
-  margin-top: 16px;
-  padding: 12px 14px;
+  margin-top: 20px;
+  padding: 18px 20px;
   border: 1px solid var(--hair);
   background: var(--bg2);
   text-align: left;
 }
-.how ul { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 7px; }
+.how ul { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 10px; }
 .how li { font-size: 13px; line-height: 1.5; color: var(--muted); }
 .how b { color: var(--text); }
 
@@ -527,8 +522,8 @@ html, body {
 .tag.heavy { background: var(--w-heavy); }
 
 .menu-best {
-  margin: 22px 0 0;
-  padding-top: 14px;
+  margin: 36px 0 0;
+  padding-top: 20px;
   border-top: 1px solid var(--hair);
   font-size: 10.5px;
   color: var(--muted);
@@ -539,7 +534,7 @@ html, body {
 #goodbye .cta { margin-top: 20px; width: 100%; }
 
 /* ---------- Level briefing ---------- */
-.intro-card { width: min(440px, 100%); }
+.intro-card { width: min(480px, 100%); }
 .over-kicker {
   margin: 0;
   font-size: 10.5px;
@@ -547,10 +542,10 @@ html, body {
   text-transform: uppercase;
   color: var(--accent);
 }
-.intro-card h2 { font-size: 34px; margin-top: 6px; }
+.intro-card h2 { font-size: 36px; margin-top: 10px; }
 .intro-rules {
   list-style: none;
-  margin: 20px 0 0;
+  margin: 28px 0 0;
   padding: 0;
   text-align: left;
   border-top: 1px solid var(--hair);
@@ -558,8 +553,8 @@ html, body {
 .intro-rules li {
   display: flex;
   align-items: baseline;
-  gap: 14px;
-  padding: 11px 2px;
+  gap: 18px;
+  padding: 15px 2px;
   border-bottom: 1px solid var(--hair);
   font-size: 14px;
   line-height: 1.45;
@@ -580,22 +575,22 @@ html, body {
 @keyframes rule-in { from { opacity: 0; transform: translateX(-6px); } }
 .intro-goal {
   display: inline-block;
-  margin: 18px 0 0;
-  padding: 5px 10px;
+  margin: 26px 0 0;
+  padding: 6px 12px;
   border: 1px solid var(--accent);
   color: var(--accent);
   font-size: 10.5px;
   font-weight: 600;
   text-transform: uppercase;
 }
-.intro-card .menu-buttons { margin-top: 18px; gap: 4px; }
+.intro-card .menu-buttons { margin-top: 26px; gap: 8px; }
 
 /* ---------- Revive offer ---------- */
-.revive-card { width: min(360px, 100%); }
+.revive-card { width: min(400px, 100%); }
 .revive-heart {
   width: 64px;
   height: 64px;
-  margin: 0 auto 14px;
+  margin: 0 auto 20px;
   display: grid;
   place-items: center;
   border: 1px solid var(--good);
@@ -612,15 +607,15 @@ html, body {
 .revive-card .tagline b { color: var(--text); }
 
 /* ---------- Pause ---------- */
-.pause-card { width: min(320px, 100%); }
+.pause-card { width: min(360px, 100%); }
 
 /* ---------- Results ---------- */
 .verdict {
-  margin-top: 8px !important;
+  margin-top: 12px !important;
   font-size: 28px !important;
 }
 .big-score {
-  margin: 14px 0 0;
+  margin: 22px 0 0;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -643,8 +638,8 @@ html, body {
 }
 .best {
   display: inline-block;
-  margin: 12px 0 0;
-  padding: 3px 8px;
+  margin: 18px 0 0;
+  padding: 4px 10px;
   border: 1px solid var(--line);
   font-size: 10px;
   font-weight: 500;
@@ -656,20 +651,20 @@ html, body {
 .final-stats {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  margin: 22px 0 22px;
+  margin: 30px 0 28px;
   border-top: 1px solid var(--hair);
   border-left: 1px solid var(--hair);
 }
 .final-stats div {
   min-width: 0;
-  padding: 10px 10px 11px;
+  padding: 14px 14px 15px;
   border-right: 1px solid var(--hair);
   border-bottom: 1px solid var(--hair);
   text-align: left;
 }
 .final-stats dt { font-size: 9.5px; font-weight: 500; text-transform: uppercase; color: var(--muted); }
 .final-stats dd {
-  margin: 4px 0 0;
+  margin: 6px 0 0;
   font-family: var(--font-display);
   font-size: 18px;
   font-weight: 700;
@@ -677,14 +672,14 @@ html, body {
   overflow-wrap: anywhere;
 }
 
-.over-actions { display: flex; gap: 8px; }
+.over-actions { display: flex; gap: 12px; }
 .over-actions .cta { flex: 1; }
 
 .share-row {
   display: flex;
   justify-content: center;
-  gap: 18px;
-  margin-top: 14px;
+  gap: 22px;
+  margin-top: 20px;
   font-size: 12.5px;
 }
 .share-row a { color: var(--text); font-weight: 500; text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--line); }
@@ -704,8 +699,7 @@ html, body {
 /* ---------- Small screens ---------- */
 @media (max-width: 640px) {
   .hud { padding-left: 16px; padding-right: 16px; padding-top: max(14px, env(safe-area-inset-top)); }
-  .hud h1 { font-size: 24px; }
-  .hud-left p { font-size: 12.5px; }
+  .hud h1 { font-size: 21px; }
   .stat { min-width: 50px; padding: 0 7px; }
   .stat b { font-size: 17px; }
   .stat span { font-size: 8.5px; }
@@ -725,13 +719,13 @@ html, body {
   .btn { width: 32px; padding: 0; justify-content: center; }
   .tray { right: 12px; left: 12px; width: auto; top: max(10px, env(safe-area-inset-top)); }
   .tray .toast:not(:last-child) { display: none; }
-  .card { padding: 22px 18px 18px; }
-  .menu-card { padding: 18px 18px 22px; }
-  .menu-head { margin-bottom: 20px; }
-  .menu-card h2 { font-size: 36px; }
-  .mode-cards { gap: 10px; margin-top: 22px; }
-  .mode-card { padding: 12px 12px 14px; }
-  .mode-top { margin-bottom: 12px; }
+  .card { padding: 28px 20px 24px; }
+  .menu-card { padding: 20px 20px 26px; }
+  .menu-head { margin-bottom: 28px; }
+  .menu-card h2 { font-size: 40px; }
+  .mode-cards { gap: 12px; margin-top: 32px; }
+  .mode-card { padding: 16px 14px 18px; }
+  .mode-top { margin-bottom: 18px; }
   .mode-title { font-size: 17px; }
   .mode-desc { font-size: 12px; }
   .big-score span { font-size: 84px; }
