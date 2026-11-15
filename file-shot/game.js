@@ -64,7 +64,7 @@
   const VIRUS_PENALTY = 3;     // seconds lost for touching a virus in the finale
   const BUNDLE_CHANCE = 0.18;  // chance a new file is a bundle (levels 6+)
   const SMALL_RIM = 0.78;      // rim size in levels 9-10
-  const AIM_CLEAR = 1;         // levels 8-10: seconds of clean aim line after grabbing a file, then it glitches
+  const AIM_CLEAR = 0.5;       // levels 8-10: seconds of clean aim line after grabbing a file, then it glitches
   const DEADLINE = 8;          // seconds per plain file (weighted files use WEIGHTS[].ttl)
   const MAX_MISS_RUN = 5;      // the 6th miss in a row ends the game
   const VIRUS_LIFE = 7;        // seconds a virus sits on the floor before vanishing
@@ -853,7 +853,7 @@
     },
     8: {
       rules: [
-        ["SIGNAL", "The aim line works for about 1 second after you grab a file."],
+        ["SIGNAL", "The aim line works for about half a second after you grab a file."],
         ["GLITCH", "After that the signal breaks up until you let go, so aim fast or by feel."],
       ],
       goal: "Upload 12 files to move on",
@@ -2171,7 +2171,7 @@
     // bad connection (levels 8-10): the line is clean for AIM_CLEAR seconds after grabbing, then glitches
     const held_for = time - (drag.t0 || time);
     const glitch = LV().shortAim && held_for > AIM_CLEAR;
-    const warning = LV().shortAim && !glitch && held_for > AIM_CLEAR - 0.3;
+    const warning = LV().shortAim && !glitch && held_for > AIM_CLEAR - 0.15;
     const q = Math.floor(time * 14); // glitch pattern changes ~14 times a second
     const nr = (k) => noise(q, k);
     let offX = 0, offY = 0, blank = false;

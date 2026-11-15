@@ -23,7 +23,7 @@ A browser game that turns a file upload screen into basketball. Drag a file card
   5. **Quarantine:** virus files appear. Touching one counts as a miss.
   6. **Bundles:** rare stacks of 2 or 3 files score all their points at once (up to 6), but need a heavy pull and expire on the heavy timer.
   7. **Server busy:** every few seconds the hoop slides left and right and comes to rest on the left, the right or in the centre; the rim and a lamp flash amber just before it moves.
-  8. **Bad connection:** the aim line is clean for about 1 second after you grab a file, then glitches until you let go.
+  8. **Bad connection:** the aim line is clean for about half a second after you grab a file, then glitches until you let go.
   9. **Low storage:** the rim shrinks, and swishes score 1 bonus point.
   10. **Final upload:** everything on, one 90-second clock and a target of 40 points. Swishes add 2 seconds, touching a virus takes 3 away, and misses no longer end the game. Hit the target to finish the game.
 
