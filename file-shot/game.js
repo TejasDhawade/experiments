@@ -64,7 +64,7 @@
   const VIRUS_PENALTY = 3;     // seconds lost for touching a virus in the finale
   const BUNDLE_CHANCE = 0.18;  // chance a new file is a bundle (levels 6+)
   const SMALL_RIM = 0.78;      // rim size in levels 9-10
-  const AIM_VISIBLE = 0.45;    // share of the aim line shown in levels 8-10 (it fades out within it)
+  const AIM_CLEAR = 1;         // levels 8-10: seconds of clean aim line after grabbing a file, then it glitches
   const DEADLINE = 8;          // seconds per plain file (weighted files use WEIGHTS[].ttl)
   const MAX_MISS_RUN = 5;      // the 6th miss in a row ends the game
   const VIRUS_LIFE = 7;        // seconds a virus sits on the floor before vanishing
@@ -853,8 +853,8 @@
     },
     8: {
       rules: [
-        ["SIGNAL", "The aim line only shows the start of the arc."],
-        ["FEEL", "Judge the rest of the throw yourself. Pull distance still sets the power."],
+        ["SIGNAL", "The aim line works for about 1 second after you grab a file."],
+        ["GLITCH", "After that the signal breaks up until you let go, so aim fast or by feel."],
       ],
       goal: "Upload 12 files to move on",
     },
@@ -868,7 +868,7 @@
     10: {
       rules: [
         ["CLOCK", `One ${FINALE_SECONDS}-second clock. Score ${FINALE_TARGET} points before it runs out to finish the game.`],
-        ["ALL", "Every rule is on: weights, bundles, deadlines, viruses, moving hoop, short aim line and small rim."],
+        ["ALL", "Every rule is on: weights, bundles, deadlines, viruses, moving hoop, glitching aim line and small rim."],
         ["BONUS", `Swishes add ${SWISH_BONUS} seconds. Touching a virus takes ${VIRUS_PENALTY} seconds away.`],
         ["SAFE", "Misses no longer end the game. Only the clock does."],
       ],
@@ -2151,6 +2151,13 @@
     ctx.restore();
   }
 
+  // repeatable pseudo-random number in [0, 1) for a (frame, index) pair, used by the aim-line glitch
+  function noise(a, b) {
+    let h = (a * 374761393 + b * 668265263) ^ 0x5bf03635;
+    h = Math.imul(h ^ (h >>> 13), 1274126177);
+    return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+  }
+
   function drawTrajectory() {
     if (!held) return;
     const f = held;
@@ -2159,20 +2166,44 @@
     const v = launchVelocity(f, info);
     let x = f.x, y = f.y, vx = v.vx, vy = v.vy;
     const step = 1 / 120;
-    const short = LV().shortAim;
-    const dots = short ? Math.ceil(22 * AIM_VISIBLE) : 22; // bad connection: only the start of the arc
+    const dots = 22;
     const ready = info.power >= 0.12;
+    // bad connection (levels 8-10): the line is clean for AIM_CLEAR seconds after grabbing, then glitches
+    const held_for = time - (drag.t0 || time);
+    const glitch = LV().shortAim && held_for > AIM_CLEAR;
+    const warning = LV().shortAim && !glitch && held_for > AIM_CLEAR - 0.3;
+    const q = Math.floor(time * 14); // glitch pattern changes ~14 times a second
+    const nr = (k) => noise(q, k);
+    let offX = 0, offY = 0, blank = false;
+    if (glitch) {
+      offX = (nr(1) - 0.5) * 70 * u;
+      offY = (nr(2) - 0.5) * 46 * u;
+      blank = nr(3) < 0.18;
+    } else if (warning && nr(4) < 0.35) {
+      offX = (nr(5) - 0.5) * 10 * u;
+    }
     ctx.save();
-    ctx.fillStyle = C.accent;
     for (let d = 1; d <= dots; d++) {
       for (let s = 0; s < 4; s++) { vy += L.g * step; x += vx * step; y += vy * step; }
       if (y > L.floorY) break;
       const t = d / dots;
-      // bad connection: the short line fades all the way out; the normal line fades gently
-      const fade = short ? Math.pow(1 - (d - 1) / dots, 1.15) : 1 - t;
-      ctx.globalAlpha = fade * (ready ? 0.9 : 0.3);
-      const sz = (3.4 - 1.8 * (short ? d / 22 : t)) * u;
-      ctx.fillRect(x - sz / 2, y - sz / 2, sz, sz);
+      let px = x + offX, py = y + offY, a = (1 - t) * (ready ? 0.9 : 0.3), col = C.accent;
+      if (glitch) {
+        if (blank || nr(10 + d) < 0.45) continue;              // dropped dots
+        px += (nr(40 + d) - 0.5) * d * 2.4 * u;                  // the further along, the noisier
+        py += (nr(70 + d) - 0.5) * d * 1.8 * u;
+        if (nr(100 + d) < 0.25) col = C.text;
+        a *= 0.5 + nr(130 + d) * 0.5;
+      }
+      ctx.globalAlpha = a;
+      ctx.fillStyle = col;
+      const sz = (3.4 - 1.8 * t) * u * (glitch ? 0.6 + nr(160 + d) : 1);
+      ctx.fillRect(px - sz / 2, py - sz / 2, sz, sz);
+      // torn scan-line slivers beside the line
+      if (glitch && nr(190 + d) < 0.12) {
+        ctx.globalAlpha = 0.35;
+        ctx.fillRect(px - 14 * u * nr(220 + d), py, (10 + 22 * nr(250 + d)) * u, 1.5 * u);
+      }
     }
     ctx.restore();
 
@@ -2401,7 +2432,7 @@
     if (f.state === "spawning") f.t = 1;
     f.state = "dragging";
     held = f;
-    drag = { id: e.pointerId, sx: p.x, sy: p.y, px: p.x, py: p.y };
+    drag = { id: e.pointerId, sx: p.x, sy: p.y, px: p.x, py: p.y, t0: time };
     try { canvas.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ }
     canvas.style.cursor = "grabbing";
   });
