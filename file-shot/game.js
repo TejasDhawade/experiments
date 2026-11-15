@@ -186,8 +186,8 @@
       bg: g("--bg"), bg2: g("--bg2"), surface: g("--surface"), text: g("--text"),
       muted: g("--muted"), line: g("--line"), accent: g("--accent"), onAccent: g("--on-accent"),
       danger: g("--bad"), good: g("--good"), virus: g("--virus"),
-      grid: dark ? "rgba(255,255,255,0.035)" : "rgba(17,17,17,0.03)",
-      gridMajor: dark ? "rgba(255,255,255,0.07)" : "rgba(17,17,17,0.06)",
+      grid: dark ? "rgba(255,255,255,0.025)" : "rgba(17,17,17,0.03)",
+      gridMajor: dark ? "rgba(255,255,255,0.05)" : "rgba(17,17,17,0.06)",
       floor: dark ? "#0a0b0c" : "#e2e1dc",
       zone: dark ? "rgba(22,24,26,0.7)" : "rgba(246,245,241,0.75)",
       // materials
@@ -1634,7 +1634,7 @@
     ctx.textAlign = "left";
     ctx.textBaseline = "alphabetic";
     ctx.lineWidth = 1.5;
-    ctx.strokeStyle = "rgba(255,106,26,0.14)";
+    ctx.strokeStyle = "rgba(255,106,26,0.09)";
     ctx.strokeText(big, Math.max(16, W * 0.03), fy - 18 * u);
     ctx.restore();
 
